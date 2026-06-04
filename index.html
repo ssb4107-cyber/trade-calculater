@@ -76,12 +76,13 @@
         <div style="display: flex; gap: 6px; align-items: center;">
             <div class="field-wrapper" style="flex: 1.3; height: 45px; padding: 0 10px;" onclick="document.getElementById('currPrice').focus()">
                 <span class="currPriceSymbol" style="font-weight:800; margin-right:3px; font-size:1rem;">$</span>
-                <input type="text" inputmode="decimal" id="currPrice" class="clean-input" style="width: 2px; font-size: 1rem;" oninput="handleCurrPriceInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('currChange').focus();}">
+                <input type="text" inputmode="decimal" id="currPrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px; font-size: 1rem;" oninput="handleCurrPriceInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('currChange').focus();}">
                 <span id="currPriceGhostText" class="ghost-text" style="font-size: 1rem;">0.00</span>
             </div>
+            
             <div class="field-wrapper" style="flex: 1.3; height: 45px; padding: 0 8px;" onclick="document.getElementById('currChange').focus()">
-                <button id="changeSignBtn" class="sign-btn" style="background: var(--buy);" onclick="event.stopPropagation(); toggleChangeSign();">-</button>
-                <input type="text" inputmode="decimal" id="currChange" class="clean-input" style="width: 2px; font-size: 1rem;" oninput="handleCurrChangeInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();convertOriginalPrice();}">
+                <button id="changeSignBtn" type="button" tabindex="-1" class="sign-btn" style="background: var(--buy);" onclick="event.stopPropagation(); toggleChangeSign();">-</button>
+                <input type="text" inputmode="decimal" id="currChange" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px; font-size: 1rem;" oninput="handleCurrChangeInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();convertOriginalPrice();}">
                 <span id="currChangeGhostText" class="ghost-text" style="font-size: 1rem;">0.00</span>
                 <span style="font-weight:800; margin-left:3px; font-size:1rem; color: var(--gray);">%</span>
             </div>
@@ -93,7 +94,7 @@
         <label>기준 가격</label>
         <div class="field-wrapper" onclick="document.getElementById('basePrice').focus()">
             <span id="priceSymbol" style="font-weight:800; margin-right:5px; font-size:1.25rem;">$</span>
-            <input type="text" inputmode="decimal" id="basePrice" class="clean-input" style="width: 2px;" oninput="handleInput(event)" onkeydown="handlePriceKey(event)">
+            <input type="text" inputmode="decimal" id="basePrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px;" oninput="handleInput(event)" onkeydown="handlePriceKey(event)">
             <span id="ghostText" class="ghost-text">0.00</span>
         </div>
     </div>
@@ -110,7 +111,7 @@
             </div>
             <div class="field-wrapper" style="flex: 1.5;" onclick="document.getElementById('percentInput').focus()">
                 <span style="font-weight:800; margin-right:5px; font-size:1.25rem;">%</span>
-                <input type="text" inputmode="decimal" id="percentInput" class="clean-input" style="width: 2px;" oninput="handlePercentInput(event)" onkeydown="handleEnter(event)">
+                <input type="text" inputmode="decimal" id="percentInput" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px;" oninput="handlePercentInput(event)" onkeydown="handleEnter(event)">
                 <span id="percentGhostText" class="ghost-text">0.00</span>
             </div>
         </div>
@@ -203,8 +204,8 @@
         }
     }
 
-    // [핵심 엔진] 원장님 제안 자릿수 연동 가변 소수점 코어 공식
-    function coreUniversalDecimalProcessor(el, ghostEl, isDecimalMode, e) {
+    // [특급 보완] 모바일 키보드 글자조합 버그를 완전히 무력화하는 슬라이딩 엔진 체계
+    function coreUniversalDecimalProcessor(el, ghostEl, isDecimalMode, e, callback) {
         let autoDecEl = document.getElementById('autoDecimal');
         let autoDec = autoDecEl ? autoDecEl.checked : false;
 
@@ -215,74 +216,89 @@
 
         if (e && e.data === '.') { el.dataset.manualDot = "true"; }
 
+        let finalValue = '';
+        let ghostText = '';
+
         if (isDecimalMode && autoDec && el.dataset.manualDot !== "true") {
             let justNumbers = val.replace(/\./g, '');
             if (!justNumbers) {
-                el.value = '';
-                ghostEl.textContent = '0.00';
+                finalValue = '';
+                ghostText = '0.00';
             } else {
                 let len = justNumbers.length;
                 let num = parseInt(justNumbers, 10);
                 
-                // 패턴 구현: 5 -> 5 / 51 -> 5.1 / 512 -> 5.12 / 5124 -> 51.24
+                // 원장님께서 명시해주신 정밀 규격 테이블 연동
                 if (len === 1) {
-                    el.value = num.toString();
-                    ghostEl.textContent = '.00';
+                    finalValue = num.toString();
+                    ghostText = '.00';
                 } else if (len === 2) {
-                    el.value = (num / 10).toFixed(1);
-                    ghostEl.textContent = '0';
+                    finalValue = (num / 10).toFixed(1);
+                    ghostText = '0';
                 } else {
-                    el.value = (num / 100).toFixed(2);
-                    ghostEl.textContent = '';
+                    finalValue = (num / 100).toFixed(2);
+                    ghostText = '';
                 }
             }
         } else {
-            // 수동 입력(점 입력시) 또는 원화(KRW) 모드 정밀 연산
-            el.value = val;
+            finalValue = val;
             if (!val) {
-                ghostEl.textContent = isDecimalMode ? '0.00' : '0';
+                ghostText = isDecimalMode ? '0.00' : '0';
             } else {
                 if (!isDecimalMode) {
-                    ghostEl.textContent = val.endsWith('00') ? "" : (val.endsWith('0') ? "0" : "00");
+                    ghostText = val.endsWith('00') ? "" : (val.endsWith('0') ? "0" : "00");
                 } else {
-                    if (!val.includes('.')) ghostEl.textContent = ".00";
-                    else if (val.endsWith('.')) ghostEl.textContent = "00";
-                    else if (val.split('.')[1].length === 1) ghostEl.textContent = "0";
-                    else ghostEl.textContent = "";
+                    if (!val.includes('.')) ghostText = ".00";
+                    else if (val.endsWith('.')) ghostText = "00";
+                    else if (val.split('.')[1].length === 1) ghostText = "0";
+                    else ghostText = "";
                 }
             }
         }
+
+        // 키보드 입력 프레임과 화면 렌더링 프레임을 분리하여 강제 밀림 버그 원천 봉쇄
+        setTimeout(() => {
+            el.value = finalValue;
+            ghostEl.textContent = ghostText;
+            if (el === document.activeElement) {
+                el.setSelectionRange(finalValue.length, finalValue.length);
+            }
+            if(callback) callback();
+        }, 0);
     }
 
-    // 각각의 인풋 핸들러 링크 연동
     function handleInput(e) {
         let el = document.getElementById('basePrice');
         let ghostEl = document.getElementById('ghostText');
-        coreUniversalDecimalProcessor(el, ghostEl, (currency === 'USD'), e);
-        adjustWidthCustom(el, 'widthCalcSpan', '1.25rem');
-        updateLiveResults();
+        coreUniversalDecimalProcessor(el, ghostEl, (currency === 'USD'), e, () => {
+            adjustWidthCustom(el, 'widthCalcSpan', '1.25rem');
+            updateLiveResults();
+        });
     }
 
     function handleCurrPriceInput(e) {
         let el = document.getElementById('currPrice');
         let ghostEl = document.getElementById('currPriceGhostText');
-        coreUniversalDecimalProcessor(el, ghostEl, (currency === 'USD'), e);
-        adjustWidthCustom(el, 'currPriceWidthCalcSpan', '1rem');
+        coreUniversalDecimalProcessor(el, ghostEl, (currency === 'USD'), e, () => {
+            adjustWidthCustom(el, 'currPriceWidthCalcSpan', '1rem');
+        });
     }
 
     function handleCurrChangeInput(e) {
         let el = document.getElementById('currChange');
         let ghostEl = document.getElementById('currChangeGhostText');
-        coreUniversalDecimalProcessor(el, ghostEl, true, e); // 비율 계열은 무조건 소수점 처리 활성화
-        adjustWidthCustom(el, 'currChangeWidthCalcSpan', '1rem');
+        coreUniversalDecimalProcessor(el, ghostEl, true, e, () => {
+            adjustWidthCustom(el, 'currChangeWidthCalcSpan', '1rem');
+        });
     }
 
     function handlePercentInput(e) {
         let el = document.getElementById('percentInput');
         let ghostEl = document.getElementById('percentGhostText');
-        coreUniversalDecimalProcessor(el, ghostEl, true, e); // 비율 계열은 무조건 소수점 처리 활성화
-        adjustWidthCustom(el, 'percentWidthCalcSpan', '1.25rem');
-        updateLiveResults();
+        coreUniversalDecimalProcessor(el, ghostEl, true, e, () => {
+            adjustWidthCustom(el, 'percentWidthCalcSpan', '1.25rem');
+            updateLiveResults();
+        });
     }
 
     function handleAllInputsReset() {
