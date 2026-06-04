@@ -36,23 +36,19 @@
         .clean-input { border: none; background: transparent; outline: none; color: var(--primary); font-family: inherit; font-size: 1.25rem; font-weight: 600; padding: 0; margin: 0; height: 100%; box-sizing: border-box; caret-color: var(--buy); }
         .clean-input[type="number"]::-webkit-outer-spin-button, .clean-input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .clean-input[type="number"] { -moz-appearance: textfield; }
-        select.clean-input { cursor: pointer; appearance: none; -webkit-appearance: none; }
-        select.clean-input option { background-color: var(--select-bg); color: var(--primary); }
-
+        
         .ghost-text { color: var(--ghost); font-weight: 600; font-size: 1.25rem; pointer-events: none; }
         .option-group { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: 0.85rem; color: var(--gray); }
 
-        .results { margin-top: 15px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .res-box { padding: 15px; border-radius: 16px; text-align: center; border: 1px solid rgba(128,128,128,0.1); }
-        .buy-box { background: rgba(0, 123, 255, 0.1); color: var(--buy); }
-        .sell-box { background: rgba(232, 65, 24, 0.1); color: var(--sell); }
-        .res-value { font-size: 1.25rem; font-weight: 800; display: block; }
-        
         .history-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 15px; }
         .history-table th { border-bottom: 2px solid var(--input-border); padding: 8px; color: var(--gray); }
         .history-table td { padding: 10px 4px; border-bottom: 1px solid var(--input-border); text-align: center; }
         .btn-del { color: var(--sell); cursor: pointer; border: none; background: none; font-size: 1.1rem; font-weight: bold;}
         .sign-btn { border: none; color: white; font-weight: 900; border-radius: 8px; width: 28px; height: 28px; cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; transition: 0.1s; margin-right: 5px; }
+        
+        /* 테이블 내부 저정 버튼 스타일 */
+        .row-save-btn { background: var(--primary); color: var(--card); border: none; padding: 5px 10px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 0.75rem; transition: 0.1s; }
+        .row-save-btn:hover { opacity: 0.8; }
     </style>
 </head>
 <body>
@@ -68,7 +64,7 @@
 
     <div class="option-group" style="background: rgba(128,128,128,0.05); padding: 12px 15px; border-radius: 16px;">
         <input type="checkbox" id="autoDecimal" checked onchange="handleAllInputsReset()">
-        <label for="autoDecimal" style="cursor:pointer; font-weight:700; opacity:0.9;">마지막 두 자리 소수점 자동 적용 (달러/비율/등락률 공통)</label>
+        <label for="autoDecimal" style="cursor:pointer; font-weight:700; opacity:0.9;">마지막 두 자리 소수점 자동 적용 (달러/등락률 공통)</label>
     </div>
 
     <div class="input-group" style="background: rgba(128,128,128,0.03); padding: 15px; border-radius: 18px; border: 1px dashed var(--input-border); margin-bottom: 20px;">
@@ -99,40 +95,11 @@
         </div>
     </div>
 
-    <div class="input-group">
-        <label>목표 비율 (%)</label>
-        <div style="display: flex; gap: 10px;">
-            <div class="field-wrapper" style="flex: 1;">
-                <select id="percentSelect" class="clean-input" style="width: 100%; text-align:center;" onchange="syncPercent(this.value)">
-                    <option value="">1~10%</option>
-                    <script>for(let i=1; i<=10; i++) document.write(`<option value="${i}">${i}%</option>`);</script>
-                </select>
-                <span style="pointer-events:none; font-size:0.8rem; color:var(--gray);">▼</span>
-            </div>
-            <div class="field-wrapper" style="flex: 1.5;" onclick="document.getElementById('percentInput').focus()">
-                <span style="font-weight:800; margin-right:5px; font-size:1.25rem;">%</span>
-                <input type="text" inputmode="decimal" id="percentInput" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px;" oninput="handlePercentInput(event)" onkeydown="handleEnter(event)">
-                <span id="percentGhostText" class="ghost-text">0.00</span>
-            </div>
-        </div>
-    </div>
-
-    <div class="results">
-        <div class="res-box buy-box">
-            <span style="font-size:0.75rem; font-weight:600;">매수 타점 (-)</span>
-            <span id="buyVal" class="res-value">0</span>
-        </div>
-        <div class="res-box sell-box">
-            <span style="font-size:0.75rem; font-weight:600;">매도 타점 (+)</span>
-            <span id="sellVal" class="res-value">0</span>
-        </div>
-    </div>
-
     <div id="stepTableContainer" style="margin-top: 20px; display: none; background: rgba(128,128,128,0.02); padding: 15px; border-radius: 18px; border: 1px solid rgba(128,128,128,0.08);">
-        <label style="font-weight:700; font-size:0.9rem; display: block; margin-bottom: 5px;">📊 1% 단위 분할 타점 (10단계)</label>
+        <label style="font-weight:700; font-size:0.9rem; display: block; margin-bottom: 5px;">📊 1% 단위 분할 타점 (원하는 라인 지정 저장)</label>
         <table class="history-table" style="margin-top: 5px;">
             <thead>
-                <tr><th>간격</th><th style="color:var(--buy)">매수 (-)</th><th style="color:var(--sell)">매도 (+)</th></tr>
+                <tr><th>간격</th><th style="color:var(--buy)">매수 (-)</th><th style="color:var(--sell)">매도 (+)</th><th>기록</th></tr>
             </thead>
             <tbody id="stepTableBody"></tbody>
         </table>
@@ -204,7 +171,7 @@
         }
     }
 
-    // [특급 보완] 모바일 키보드 글자조합 버그를 완전히 무력화하는 슬라이딩 엔진 체계
+    // 슬라이딩 가변 소수점 코어 프로세서
     function coreUniversalDecimalProcessor(el, ghostEl, isDecimalMode, e, callback) {
         let autoDecEl = document.getElementById('autoDecimal');
         let autoDec = autoDecEl ? autoDecEl.checked : false;
@@ -228,7 +195,6 @@
                 let len = justNumbers.length;
                 let num = parseInt(justNumbers, 10);
                 
-                // 원장님께서 명시해주신 정밀 규격 테이블 연동
                 if (len === 1) {
                     finalValue = num.toString();
                     ghostText = '.00';
@@ -256,7 +222,6 @@
             }
         }
 
-        // 키보드 입력 프레임과 화면 렌더링 프레임을 분리하여 강제 밀림 버그 원천 봉쇄
         setTimeout(() => {
             el.value = finalValue;
             ghostEl.textContent = ghostText;
@@ -292,20 +257,10 @@
         });
     }
 
-    function handlePercentInput(e) {
-        let el = document.getElementById('percentInput');
-        let ghostEl = document.getElementById('percentGhostText');
-        coreUniversalDecimalProcessor(el, ghostEl, true, e, () => {
-            adjustWidthCustom(el, 'percentWidthCalcSpan', '1.25rem');
-            updateLiveResults();
-        });
-    }
-
     function handleAllInputsReset() {
         handleInput();
         handleCurrPriceInput();
         handleCurrChangeInput();
-        handlePercentInput();
     }
 
     function getTickSize(price) {
@@ -325,24 +280,14 @@
     function updateLiveResults() {
         let val = document.getElementById('basePrice').value;
         if (!val) {
-            document.getElementById('buyVal').innerText = '0';
-            document.getElementById('sellVal').innerText = '0';
             document.getElementById('stepTableContainer').style.display = 'none';
             return;
         }
-        
         let price = parseFloat(val);
-        let pct = parseFloat(document.getElementById('percentInput').value) || 0;
-        
-        let targets = calculateTargets(price, pct);
-        const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
-        
-        document.getElementById('buyVal').innerText = targets.buyNum.toLocaleString(undefined, format);
-        document.getElementById('sellVal').innerText = targets.sellNum.toLocaleString(undefined, format);
-
         displayStepTable(price);
     }
 
+    // [변경 핵심] 테이블 각 우측 열에 독립된 '저장' 버튼 동적 생성 및 매핑
     function displayStepTable(price) {
         const container = document.getElementById('stepTableContainer');
         const tbody = document.getElementById('stepTableBody');
@@ -358,10 +303,36 @@
                     <td style="font-weight:700; color:var(--gray);">${i}%</td>
                     <td style="font-weight:700; color:var(--buy)">${targets.buyNum.toLocaleString(undefined, format)}</td>
                     <td style="font-weight:700; color:var(--sell)">${targets.sellNum.toLocaleString(undefined, format)}</td>
+                    <td><button type="button" tabindex="-1" class="row-save-btn" onclick="addStepHistory(${price}, ${i}, ${targets.buyNum}, ${targets.sellNum})">저장</button></td>
                 </tr>
             `;
         }
         tbody.innerHTML = html;
+    }
+
+    // [신규 핵심] 테이블 전용 라인 타점 저장 함수
+    function addStepHistory(price, pct, buyNum, sellNum) {
+        const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
+        const record = { 
+            id: Date.now(), 
+            time: new Date().toLocaleTimeString('ko-KR', {hour12:false, hour:'2-digit', minute:'2-digit'}), 
+            price, 
+            pct, 
+            buy: buyNum.toLocaleString(undefined, format), 
+            sell: sellNum.toLocaleString(undefined, format), 
+            currency 
+        };
+        
+        let history = JSON.parse(localStorage.getItem('stockHistory') || '[]');
+        history.unshift(record);
+        if(history.length > 8) history.pop();
+        localStorage.setItem('stockHistory', JSON.stringify(history));
+        displayHistory();
+        
+        // 차기 입력을 위해 기준 가격창으로 기분 좋게 리포커싱 및 전체 선택
+        const bp = document.getElementById('basePrice');
+        bp.focus();
+        bp.select();
     }
 
     function convertOriginalPrice() {
@@ -400,55 +371,16 @@
         adjustWidthCustom(bp, 'widthCalcSpan', '1.25rem');
         updateLiveResults();
         
-        const pctInput = document.getElementById('percentInput');
-        pctInput.focus();
-        pctInput.select();
+        // 원가 환산 성공 시 바로 메인 기준가 필드로 포커스 고정
+        bp.focus();
+        bp.select();
     }
 
-    function syncPercent(val) {
-        if(val) {
-            let el = document.getElementById('percentInput');
-            el.dataset.manualDot = "true";
-            el.value = parseFloat(val).toFixed(2);
-            document.getElementById('percentGhostText').textContent = '';
-            adjustWidthCustom(el, 'percentWidthCalcSpan', '1.25rem');
-            updateLiveResults();
-        }
-    }
-    
     function handlePriceKey(e) { 
         if (e.key === 'Enter') {
             e.preventDefault();
-            document.getElementById('percentInput').focus(); 
+            // 엔터 입력 시 불필요한 포커스 이동을 제한하여 기준 가격 유지
         }
-    }
-    
-    function handleEnter(e) { 
-        if (e.key === 'Enter') { 
-            e.preventDefault();
-            addHistory(); 
-            const bp = document.getElementById('basePrice');
-            bp.focus(); 
-            bp.select();
-        } 
-    }
-
-    function addHistory() {
-        let val = document.getElementById('basePrice').value;
-        if (!val) return;
-        
-        let price = parseFloat(val);
-        const pct = parseFloat(document.getElementById('percentInput').value) || 0;
-        let targets = calculateTargets(price, pct);
-        
-        const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
-        const record = { id: Date.now(), time: new Date().toLocaleTimeString('ko-KR', {hour12:false, hour:'2-digit', minute:'2-digit'}), price, pct, buy: targets.buyNum.toLocaleString(undefined, format), sell: targets.sellNum.toLocaleString(undefined, format), currency };
-        
-        let history = JSON.parse(localStorage.getItem('stockHistory') || '[]');
-        history.unshift(record);
-        if(history.length > 8) history.pop();
-        localStorage.setItem('stockHistory', JSON.stringify(history));
-        displayHistory();
     }
 
     function displayHistory() {
@@ -475,7 +407,6 @@
 
     window.onload = () => { 
         displayHistory(); 
-        document.getElementById('percentInput').value = "2.00";
         handleAllInputsReset();
     };
     document.querySelectorAll('input').forEach(i => i.addEventListener('focus', function() { this.select(); }));
