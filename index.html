@@ -30,18 +30,15 @@
         .input-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 6px; font-weight: 700; font-size: 0.85rem; opacity: 0.8; }
         
-        /* 통합 필드 디자인 (커서 클릭 유도) */
         .field-wrapper { display: flex; align-items: center; background: rgba(128,128,128,0.05); border: 2px solid var(--input-border); border-radius: 15px; padding: 0 15px; height: 55px; box-sizing: border-box; cursor: text; transition: 0.2s; }
         .field-wrapper:focus-within { border-color: var(--buy); background: rgba(0,123,255,0.05); }
         
-        /* 초정밀 클린 입력창 */
         .clean-input { border: none; background: transparent; outline: none; color: var(--primary); font-family: inherit; font-size: 1.25rem; font-weight: 600; padding: 0; margin: 0; height: 100%; box-sizing: border-box; caret-color: var(--buy); }
         .clean-input[type="number"]::-webkit-outer-spin-button, .clean-input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         .clean-input[type="number"] { -moz-appearance: textfield; }
         select.clean-input { cursor: pointer; appearance: none; -webkit-appearance: none; }
         select.clean-input option { background-color: var(--select-bg); color: var(--primary); }
 
-        /* 고스트 텍스트 (입력값과 폰트 속성 동일화) */
         .ghost-text { color: var(--ghost); font-weight: 600; font-size: 1.25rem; pointer-events: none; }
         .option-group { display: flex; align-items: center; gap: 8px; margin-bottom: 15px; font-size: 0.85rem; color: var(--gray); }
 
@@ -68,6 +65,19 @@
         <button id="btnKRW" onclick="setCurrency('KRW')">원화 (₩)</button>
     </div>
 
+    <div class="input-group" style="background: rgba(128,128,128,0.03); padding: 15px; border-radius: 18px; border: 1px dashed var(--input-border); margin-bottom: 20px;">
+        <label style="color: var(--gray); font-size: 0.8rem; margin-bottom: 8px;">🔄 현재가 ➔ 원래 가격(0%) 환산</label>
+        <div style="display: flex; gap: 8px;">
+            <div class="field-wrapper" style="flex: 1.2; height: 45px; padding: 0 10px;">
+                <input type="number" id="currPrice" placeholder="현재가" class="clean-input" style="width: 100%; font-size: 1rem;">
+            </div>
+            <div class="field-wrapper" style="flex: 1; height: 45px; padding: 0 10px;">
+                <input type="number" id="currChange" placeholder="등락률(%)" step="0.01" class="clean-input" style="width: 100%; font-size: 1rem;">
+            </div>
+            <button onclick="convertOriginalPrice()" style="background: var(--primary); color: var(--card); border: none; padding: 0 15px; border-radius: 12px; font-weight: bold; cursor: pointer; font-size: 0.85rem; height: 45px;">환산</button>
+        </div>
+    </div>
+
     <div id="usdOption" class="option-group">
         <input type="checkbox" id="autoDecimal" checked onchange="handleInput()">
         <label for="autoDecimal" style="cursor:pointer;">마지막 두 자리 소수점 자동 적용</label>
@@ -77,7 +87,7 @@
         <label>기준 가격</label>
         <div class="field-wrapper" onclick="document.getElementById('basePrice').focus()">
             <span id="priceSymbol" style="font-weight:800; margin-right:5px; font-size:1.25rem;">$</span>
-            <input type="text" inputmode="decimal" id="basePrice" class="clean-input" style="width: 2px;" oninput="handleInput()" onkeydown="handlePriceKey(event)">
+            <input type="text" inputmode="decimal" id="basePrice" class="clean-input" style="width: 2px;" oninput="handleInput(event)" onkeydown="handlePriceKey(event)">
             <span id="ghostText" class="ghost-text">0.00</span>
         </div>
     </div>
@@ -94,7 +104,7 @@
             </div>
             <div class="field-wrapper" style="flex: 1.5;" onclick="document.getElementById('percentInput').focus()">
                 <span style="font-weight:800; margin-right:5px; font-size:1.25rem;">%</span>
-                <input type="number" id="percentInput" value="2.0" step="1" class="clean-input" style="width: 100%;" onkeydown="handleEnter(event)">
+                <input type="number" id="percentInput" value="2.0" step="0.1" class="clean-input" style="width: 100%;" oninput="updateLiveResults()" onkeydown="handleEnter(event)">
             </div>
         </div>
     </div>
@@ -110,9 +120,19 @@
         </div>
     </div>
 
+    <div id="stepTableContainer" style="margin-top: 20px; display: none; background: rgba(128,128,128,0.02); padding: 15px; border-radius: 18px; border: 1px solid rgba(128,128,128,0.08);">
+        <label style="font-weight:700; font-size:0.9rem; display: block; margin-bottom: 5px;">📊 1% 단위 분할 타점 (10단계)</label>
+        <table class="history-table" style="margin-top: 5px;">
+            <thead>
+                <tr><th>간격</th><th style="color:var(--buy)">매수 (-)</th><th style="color:var(--sell)">매도 (+)</th></tr>
+            </thead>
+            <tbody id="stepTableBody"></tbody>
+        </table>
+    </div>
+
     <div class="history-section" style="margin-top:20px;">
         <div style="display:flex; justify-content: space-between; align-items:center;">
-            <label style="font-weight:700; font-size:0.9rem;">📊 최근 기록</label>
+            <label style="font-weight:700; font-size:0.9rem;">📜 최근 저장 기록</label>
             <button onclick="clearAllHistory()" style="background:none; border:none; color:var(--gray); cursor:pointer; font-size:0.75rem; text-decoration:underline;">전체 삭제</button>
         </div>
         <table class="history-table">
@@ -141,30 +161,43 @@
         document.getElementById('basePrice').focus();
     }
 
-    // [핵심] 빈 공간 제거 및 초정밀 너비 조절 로직
-    function handleInput() {
+    // [보완 핵심] 편리한 소수점 입력 처리 및 자동 너비 조절 로직
+    function handleInput(e) {
         let el = document.getElementById('basePrice');
         let ghostEl = document.getElementById('ghostText');
-        let autoDec = document.getElementById('autoDecimal') ? document.getElementById('autoDecimal').checked : false;
+        let autoDecEl = document.getElementById('autoDecimal');
+        let autoDec = autoDecEl ? autoDecEl.checked : false;
 
         let val = el.value.replace(/[^0-9.]/g, '');
         const dotParts = val.split('.');
         if (dotParts.length > 2) val = dotParts[0] + '.' + dotParts.slice(1).join('');
 
         if (currency === 'USD' && autoDec) {
-            let justNumbers = val.replace(/\./g, '');
-            if (!justNumbers) {
-                el.value = '';
-                ghostEl.textContent = '0.00';
+            // 사용자가 소수점(.)을 명시적으로 입력했을 때 자동 소수점 기능을 해제하고 입력값 구제
+            if (e && e.data === '.') {
+                if (autoDecEl) autoDecEl.checked = false;
+                let clean = val.replace(/\./g, '');
+                if (clean.startsWith('0')) {
+                    let parsed = parseInt(clean, 10);
+                    clean = isNaN(parsed) ? '' : parsed.toString();
+                }
+                val = clean + '.';
+                el.value = val;
+                ghostEl.textContent = "00";
             } else {
-                let num = parseInt(justNumbers, 10);
-                el.value = (num / 100).toFixed(2);
-                ghostEl.textContent = ''; 
+                let justNumbers = val.replace(/\./g, '');
+                if (!justNumbers) {
+                    el.value = '';
+                    ghostEl.textContent = '0.00';
+                } else {
+                    let num = parseInt(justNumbers, 10);
+                    el.value = (num / 100).toFixed(2);
+                    ghostEl.textContent = ''; 
+                }
             }
         } else {
             el.value = val;
             if (!val) {
-                // 비어있을 때는 예시 텍스트(0.00 또는 0) 세팅
                 ghostEl.textContent = (currency === 'USD') ? '0.00' : '0';
             } else {
                 if (currency === 'KRW') {
@@ -179,6 +212,7 @@
         }
         
         adjustWidth(el);
+        updateLiveResults();
     }
 
     function adjustWidth(el) {
@@ -196,16 +230,97 @@
         }
         
         if (!el.value) {
-            // 값이 없을 땐 입력창 너비를 커서 크기(2px)로 최소화 -> 고스트가 딱 붙음
             el.style.width = '2px';
         } else {
             span.textContent = el.value;
-            // 서브픽셀 단위로 너비 정확히 계산하여 간격 및 커서 어긋남 방지
             el.style.width = Math.ceil(span.getBoundingClientRect().width) + 1 + 'px';
         }
     }
 
-    function syncPercent(val) { if(val) { document.getElementById('percentInput').value = val; addHistory(); } }
+    // 호가 단위(Tick Size) 계산 로직
+    function getTickSize(price) {
+        if (currency === 'USD') return 0.01;
+        if (price < 2000) return 1; if (price < 5000) return 5; if (price < 20000) return 10;
+        if (price < 50000) return 50; if (price < 200000) return 100; if (price < 500000) return 500;
+        return 1000;
+    }
+
+    // 공통 타점 연산 공식
+    function calculateTargets(price, pct) {
+        const tick = getTickSize(price);
+        let buyNum = Math.round((price * (1 - pct / 100)) / tick) * tick;
+        let sellNum = Math.round((price * (1 + pct / 100)) / tick) * tick;
+        return { buyNum, sellNum };
+    }
+
+    // 실시간 메인 타점 박스 및 10단계 분할 테이블 갱신
+    function updateLiveResults() {
+        let val = document.getElementById('basePrice').value;
+        if (!val) {
+            document.getElementById('buyVal').innerText = '0';
+            document.getElementById('sellVal').innerText = '0';
+            document.getElementById('stepTableContainer').style.display = 'none';
+            return;
+        }
+        
+        let price = parseFloat(val);
+        let pct = parseFloat(document.getElementById('percentInput').value) || 0;
+        
+        let targets = calculateTargets(price, pct);
+        const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
+        
+        document.getElementById('buyVal').innerText = targets.buyNum.toLocaleString(undefined, format);
+        document.getElementById('sellVal').innerText = targets.sellNum.toLocaleString(undefined, format);
+
+        // 1% 단위 10단계 테이블 실시간 생성
+        displayStepTable(price);
+    }
+
+    // 10단계 분할 타점 렌더링
+    function displayStepTable(price) {
+        const container = document.getElementById('stepTableContainer');
+        const tbody = document.getElementById('stepTableBody');
+        container.style.display = 'block';
+        
+        let html = '';
+        const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
+        
+        for (let i = 1; i <= 10; i++) {
+            let targets = calculateTargets(price, i);
+            html += `
+                <tr>
+                    <td style="font-weight:700; color:var(--gray);">${i}%</td>
+                    <td style="font-weight:700; color:var(--buy)">${targets.buyNum.toLocaleString(undefined, format)}</td>
+                    <td style="font-weight:700; color:var(--sell)">${targets.sellNum.toLocaleString(undefined, format)}</td>
+                </tr>
+            `;
+        }
+        tbody.innerHTML = html;
+    }
+
+    // [신규 핵심] 현재가와 등락률을 이용한 원래 가격(0%) 역산 함수
+    function convertOriginalPrice() {
+        const currPrice = parseFloat(document.getElementById('currPrice').value);
+        const currChange = parseFloat(document.getElementById('currChange').value);
+        
+        if (isNaN(currPrice) || isNaN(currChange)) {
+            alert("현재가와 등락률을 정확하게 입력해주세요.");
+            return;
+        }
+        
+        // 역산 공식: 원래 가격 = 현재 가격 / (1 + (등락률 / 100))
+        const originalPrice = currPrice / (1 + (currChange / 100));
+        
+        const bp = document.getElementById('basePrice');
+        bp.value = currency === 'USD' ? originalPrice.toFixed(2) : Math.round(originalPrice).toString();
+        
+        // 인풋 핸들러 강제 호출로 화면 실시간 동기화
+        handleInput();
+        bp.focus();
+        bp.select();
+    }
+
+    function syncPercent(val) { if(val) { document.getElementById('percentInput').value = val; updateLiveResults(); } }
     function handlePriceKey(e) { if (e.key === 'Enter') document.getElementById('percentInput').focus(); }
     function handleEnter(e) { 
         if (e.key === 'Enter') { 
@@ -216,34 +331,18 @@
         } 
     }
 
-    function getTickSize(price) {
-        if (currency === 'USD') return 0.01;
-        if (price < 2000) return 1; if (price < 5000) return 5; if (price < 20000) return 10;
-        if (price < 50000) return 50; if (price < 200000) return 100; if (price < 500000) return 500;
-        return 1000;
-    }
-
+    // 최근기록 저장 기능
     function addHistory() {
         let val = document.getElementById('basePrice').value;
         if (!val) return;
         
         let price = parseFloat(val);
-        const autoDec = document.getElementById('autoDecimal').checked;
-
-        if (currency === 'KRW' && !val.endsWith('00')) {
-            price *= (val.endsWith('0') ? 10 : 100);
-        }
-
-        const pct = parseFloat(document.getElementById('percentInput').value);
-        const tick = getTickSize(price);
-        let buyNum = Math.round((price * (1 - pct / 100)) / tick) * tick;
-        let sellNum = Math.round((price * (1 + pct / 100)) / tick) * tick;
+        const pct = parseFloat(document.getElementById('percentInput').value) || 0;
+        let targets = calculateTargets(price, pct);
         
         const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
-        document.getElementById('buyVal').innerText = buyNum.toLocaleString(undefined, format);
-        document.getElementById('sellVal').innerText = sellNum.toLocaleString(undefined, format);
-
-        const record = { id: Date.now(), time: new Date().toLocaleTimeString('ko-KR', {hour12:false, hour:'2-digit', minute:'2-digit'}), price, pct, buy: buyNum.toLocaleString(undefined, format), sell: sellNum.toLocaleString(undefined, format), currency };
+        const record = { id: Date.now(), time: new Date().toLocaleTimeString('ko-KR', {hour12:false, hour:'2-digit', minute:'2-digit'}), price, pct, buy: targets.buyNum.toLocaleString(undefined, format), sell: targets.sellNum.toLocaleString(undefined, format), currency };
+        
         let history = JSON.parse(localStorage.getItem('stockHistory') || '[]');
         history.unshift(record);
         if(history.length > 8) history.pop();
@@ -278,4 +377,3 @@
 </script>
 </body>
 </html>
-
