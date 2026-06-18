@@ -46,7 +46,6 @@
         .btn-del { color: var(--sell); cursor: pointer; border: none; background: none; font-size: 1.1rem; font-weight: bold;}
         .sign-btn { border: none; color: white; font-weight: 900; border-radius: 8px; width: 28px; height: 28px; cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; transition: 0.1s; margin-right: 5px; }
         
-        /* 테이블 내부 저정 버튼 스타일 */
         .row-save-btn { background: var(--primary); color: var(--card); border: none; padding: 5px 10px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 0.75rem; transition: 0.1s; }
         .row-save-btn:hover { opacity: 0.8; }
     </style>
@@ -90,7 +89,7 @@
         <label>기준 가격</label>
         <div class="field-wrapper" onclick="document.getElementById('basePrice').focus()">
             <span id="priceSymbol" style="font-weight:800; margin-right:5px; font-size:1.25rem;">$</span>
-            <input type="text" inputmode="decimal" id="basePrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px;" oninput="handleInput(event)" onkeydown="handlePriceKey(event)">
+            <input type="text" inputmode="decimal" id="basePrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px;" oninput="handleBasePriceInput(event)" onkeydown="handlePriceKey(event)">
             <span id="ghostText" class="ghost-text">0.00</span>
         </div>
     </div>
@@ -135,6 +134,19 @@
         }
     }
 
+    function resetConversionInputs() {
+        const cp = document.getElementById('currPrice');
+        const cc = document.getElementById('currChange');
+        cp.value = '';
+        cc.value = '';
+        cp.dataset.manualDot = "false";
+        cc.dataset.manualDot = "false";
+        document.getElementById('currPriceGhostText').textContent = (currency === 'USD' ? '0.00' : '0');
+        document.getElementById('currChangeGhostText').textContent = '0.00';
+        adjustWidthCustom(cp, 'currPriceWidthCalcSpan', '1rem');
+        adjustWidthCustom(cc, 'currChangeWidthCalcSpan', '1rem');
+    }
+
     function setCurrency(type) {
         currency = type;
         document.getElementById('btnUSD').className = type === 'USD' ? 'active-usd' : '';
@@ -143,10 +155,8 @@
         document.querySelectorAll('.currPriceSymbol').forEach(el => el.innerText = type === 'USD' ? '$' : '₩');
         
         document.getElementById('basePrice').value = '';
-        document.getElementById('currPrice').value = '';
-        document.getElementById('currChange').value = '';
-        
-        handleAllInputsReset();
+        resetConversionInputs();
+        handleBasePriceInput();
         document.getElementById('basePrice').focus();
     }
 
@@ -171,17 +181,22 @@
         }
     }
 
-    // 슬라이딩 가변 소수점 코어 프로세서
     function coreUniversalDecimalProcessor(el, ghostEl, isDecimalMode, e, callback) {
         let autoDecEl = document.getElementById('autoDecimal');
         let autoDec = autoDecEl ? autoDecEl.checked : false;
 
-        if (!el.value) { el.dataset.manualDot = "false"; }
+        let inputData = e ? e.data : null;
+        if (inputData === '.') {
+            el.dataset.manualDot = "true";
+        }
+
         let val = el.value.replace(/[^0-9.]/g, '');
         const dotParts = val.split('.');
         if (dotParts.length > 2) val = dotParts[0] + '.' + dotParts.slice(1).join('');
 
-        if (e && e.data === '.') { el.dataset.manualDot = "true"; }
+        if (!val) { 
+            el.dataset.manualDot = "false"; 
+        }
 
         let finalValue = '';
         let ghostText = '';
@@ -211,30 +226,35 @@
             if (!val) {
                 ghostText = isDecimalMode ? '0.00' : '0';
             } else {
+                if (el.dataset.manualDot === "true" && !val.includes('.')) {
+                    finalValue = val + '.';
+                }
+                
                 if (!isDecimalMode) {
-                    ghostText = val.endsWith('00') ? "" : (val.endsWith('0') ? "0" : "00");
+                    ghostText = finalValue.endsWith('00') ? "" : (finalValue.endsWith('0') ? "0" : "00");
                 } else {
-                    if (!val.includes('.')) ghostText = ".00";
-                    else if (val.endsWith('.')) ghostText = "00";
-                    else if (val.split('.')[1].length === 1) ghostText = "0";
+                    if (!finalValue.includes('.')) ghostText = ".00";
+                    else if (finalValue.endsWith('.')) ghostText = "00";
+                    else if (finalValue.split('.')[1].length === 1) ghostText = "0";
                     else ghostText = "";
                 }
             }
         }
 
-        setTimeout(() => {
-            el.value = finalValue;
-            ghostEl.textContent = ghostText;
-            if (el === document.activeElement) {
-                el.setSelectionRange(finalValue.length, finalValue.length);
-            }
-            if(callback) callback();
-        }, 0);
+        el.value = finalValue;
+        ghostEl.textContent = ghostText;
+        if (callback) callback();
     }
 
-    function handleInput(e) {
+    function handleBasePriceInput(e) {
         let el = document.getElementById('basePrice');
         let ghostEl = document.getElementById('ghostText');
+        
+        // 사용자가 기준가를 직접 건드리면(수정하면) 현재가 환산 연동 필드들을 초기화
+        if (e && e.type === 'input') {
+            resetConversionInputs();
+        }
+
         coreUniversalDecimalProcessor(el, ghostEl, (currency === 'USD'), e, () => {
             adjustWidthCustom(el, 'widthCalcSpan', '1.25rem');
             updateLiveResults();
@@ -258,7 +278,7 @@
     }
 
     function handleAllInputsReset() {
-        handleInput();
+        handleBasePriceInput();
         handleCurrPriceInput();
         handleCurrChangeInput();
     }
@@ -279,7 +299,7 @@
 
     function updateLiveResults() {
         let val = document.getElementById('basePrice').value;
-        if (!val) {
+        if (!val || isNaN(parseFloat(val))) {
             document.getElementById('stepTableContainer').style.display = 'none';
             return;
         }
@@ -287,7 +307,6 @@
         displayStepTable(price);
     }
 
-    // [변경 핵심] 테이블 각 우측 열에 독립된 '저장' 버튼 동적 생성 및 매핑
     function displayStepTable(price) {
         const container = document.getElementById('stepTableContainer');
         const tbody = document.getElementById('stepTableBody');
@@ -310,7 +329,6 @@
         tbody.innerHTML = html;
     }
 
-    // [신규 핵심] 테이블 전용 라인 타점 저장 함수
     function addStepHistory(price, pct, buyNum, sellNum) {
         const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
         const record = { 
@@ -329,7 +347,6 @@
         localStorage.setItem('stockHistory', JSON.stringify(history));
         displayHistory();
         
-        // 차기 입력을 위해 기준 가격창으로 기분 좋게 리포커싱 및 전체 선택
         const bp = document.getElementById('basePrice');
         bp.focus();
         bp.select();
@@ -371,7 +388,6 @@
         adjustWidthCustom(bp, 'widthCalcSpan', '1.25rem');
         updateLiveResults();
         
-        // 원가 환산 성공 시 바로 메인 기준가 필드로 포커스 고정
         bp.focus();
         bp.select();
     }
@@ -379,7 +395,6 @@
     function handlePriceKey(e) { 
         if (e.key === 'Enter') {
             e.preventDefault();
-            // 엔터 입력 시 불필요한 포커스 이동을 제한하여 기준 가격 유지
         }
     }
 
