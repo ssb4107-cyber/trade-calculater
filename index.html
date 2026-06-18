@@ -71,13 +71,13 @@
         <div style="display: flex; gap: 6px; align-items: center;">
             <div class="field-wrapper" style="flex: 1.3; height: 45px; padding: 0 10px;" onclick="document.getElementById('currPrice').focus()">
                 <span class="currPriceSymbol" style="font-weight:800; margin-right:3px; font-size:1rem;">$</span>
-                <input type="text" inputmode="decimal" id="currPrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px; font-size: 1rem;" oninput="handleCurrPriceInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('currChange').focus();}">
+                <input type="text" inputmode="decimal" id="currPrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px; font-size: 1rem;" onkeydown="interceptDotKey(event, this)" oninput="handleCurrPriceInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('currChange').focus();}">
                 <span id="currPriceGhostText" class="ghost-text" style="font-size: 1rem;">0.00</span>
             </div>
             
             <div class="field-wrapper" style="flex: 1.3; height: 45px; padding: 0 8px;" onclick="document.getElementById('currChange').focus()">
                 <button id="changeSignBtn" type="button" tabindex="-1" class="sign-btn" style="background: var(--buy);" onclick="event.stopPropagation(); toggleChangeSign();">-</button>
-                <input type="text" inputmode="decimal" id="currChange" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px; font-size: 1rem;" oninput="handleCurrChangeInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();convertOriginalPrice();}">
+                <input type="text" inputmode="decimal" id="currChange" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px; font-size: 1rem;" onkeydown="interceptDotKey(event, this)" oninput="handleCurrChangeInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();convertOriginalPrice();}">
                 <span id="currChangeGhostText" class="ghost-text" style="font-size: 1rem;">0.00</span>
                 <span style="font-weight:800; margin-left:3px; font-size:1rem; color: var(--gray);">%</span>
             </div>
@@ -89,7 +89,7 @@
         <label>기준 가격</label>
         <div class="field-wrapper" onclick="document.getElementById('basePrice').focus()">
             <span id="priceSymbol" style="font-weight:800; margin-right:5px; font-size:1.25rem;">$</span>
-            <input type="text" inputmode="decimal" id="basePrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px;" oninput="handleBasePriceInput(event)" onkeydown="handlePriceKey(event)">
+            <input type="text" inputmode="decimal" id="basePrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px;" onkeydown="interceptDotKey(event, this); handlePriceKey(event);" oninput="handleBasePriceInput(event)">
             <span id="ghostText" class="ghost-text">0.00</span>
         </div>
     </div>
@@ -134,7 +134,23 @@
         }
     }
 
-    // 환산 영역을 시각적 레이아웃까지 완벽하게 태초의 상태로 복원하는 함수
+    // [핵심 인터셉터] 온인풋 이전에 소수점 키를 가로채 완벽하게 홀드(Lock)시키는 함수
+    function interceptDotKey(e, el) {
+        if (e.key === '.') {
+            let currentVal = el.value.replace(/\./g, '');
+            if (currentVal.length > 0 && !el.value.includes('.')) {
+                e.preventDefault(); // 기존 온인풋 연산 일시정지
+                el.value = currentVal + '.'; // 45. 형태로 강제 고정
+                el.dataset.manualDot = "true"; // 수동모드 잠금 활성화
+                
+                // 가변폭 및 잔상 갱신 트리거 호출
+                if (el.id === 'basePrice') handleBasePriceInput(e);
+                else if (el.id === 'currPrice') handleCurrPriceInput(e);
+                else if (el.id === 'currChange') handleCurrChangeInput(e);
+            }
+        }
+    }
+
     function resetConversionInputs() {
         const cp = document.getElementById('currPrice');
         const cc = document.getElementById('currChange');
@@ -144,7 +160,6 @@
         cp.dataset.manualDot = "false";
         cc.dataset.manualDot = "false";
         
-        // 가상 텍스트 초기화 및 강제 노출
         const cpGhost = document.getElementById('currPriceGhostText');
         const ccGhost = document.getElementById('currChangeGhostText');
         cpGhost.textContent = (currency === 'USD' ? '0.00' : '0');
@@ -152,7 +167,6 @@
         cpGhost.style.opacity = '1';
         ccGhost.style.opacity = '1';
         
-        // 인풋 박스 너비 강제 최소화 리셋
         cp.style.width = '2px';
         cc.style.width = '2px';
         
@@ -194,22 +208,14 @@
         }
     }
 
-    // 슬라이딩 엔진 Core 프로세서 (수동 마킹 및 가상 텍스트 숨김 로직 완벽 내장)
+    // 고도화된 정밀 소수점 가변 가공 엔진
     function coreUniversalDecimalProcessor(el, ghostEl, isDecimalMode, e, callback) {
         let autoDecEl = document.getElementById('autoDecimal');
         let autoDec = autoDecEl ? autoDecEl.checked : false;
 
-        // 1. 백스페이스 등으로 다 지웠을 때 수동 모드 해제
-        if (!el.value) {
+        // 글자가 완전히 다 지워지거나 소수점이 사라지면 수동 락(Lock) 해제
+        if (!el.value || !el.value.includes('.')) {
             el.dataset.manualDot = "false";
-        }
-
-        // 2. 사용자가 직접 온전한 점(.)을 찍었을 때 수동 락(Lock) 활성화
-        if (e && e.data === '.') {
-            // 이미 소수점이 존재하는데 또 찍은게 아니라면 수동 모드로 변환
-            if ((el.value.match(/\./g) || []).length <= 1) {
-                el.dataset.manualDot = "true";
-            }
         }
 
         let val = el.value.replace(/[^0-9.]/g, '');
@@ -219,7 +225,7 @@
         let finalValue = '';
         let ghostText = '';
 
-        // 3. 자동 슬라이딩 분기제어 (수동 락이 안 걸려있을 때만 작동)
+        // 수동 모드가 아닐 때만 원장님의 마지막 두 자리 자동 슬라이딩 적용
         if (isDecimalMode && autoDec && el.dataset.manualDot !== "true") {
             let justNumbers = val.replace(/\./g, '');
             if (!justNumbers) {
@@ -241,7 +247,7 @@
                 }
             }
         } else {
-            // 사용자가 수동 모드 상태이거나 소수점이 필요 없는 통화(KRW) 모드일 때
+            // 사용자가 수동으로 온전한 점을 찍었거나 원화(KRW) 모드일 때 (문자열 그대로 매핑)
             finalValue = val;
             if (!val) {
                 ghostText = isDecimalMode ? '0.00' : '0';
@@ -260,7 +266,7 @@
         el.value = finalValue;
         ghostEl.textContent = ghostText;
 
-        // [요구사항 반영] 글자가 입력되어 있으면 가상 텍스트를 즉시 투명하게(숨김) 처리
+        // [요구사항] 한 글자라도 들어오면 거슬리는 가상 가이드 텍스트 즉시 숨김
         if (el.value.length > 0) {
             ghostEl.style.opacity = '0';
         } else {
@@ -274,8 +280,8 @@
         let el = document.getElementById('basePrice');
         let ghostEl = document.getElementById('ghostText');
         
-        // [요구사항 반영] 사용자가 메인 기준가를 직접 수정/편집하기 시작하면 상단 환산 필드 전면 시각적 리셋
-        if (e && (e.type === 'input' || e.type === 'change')) {
+        // 사용자가 메인 기준가를 수정하기 시작하면 상단 환산 필드 영역 시각적 전면 리셋
+        if (e && (e.type === 'input' || e.type === 'keydown')) {
             resetConversionInputs();
         }
 
@@ -302,7 +308,6 @@
     }
 
     function handleAllInputsReset() {
-        // 전체 리셋 시 플래그 초기화 동기화
         document.getElementById('basePrice').dataset.manualDot = "false";
         handleBasePriceInput();
         resetConversionInputs();
@@ -409,10 +414,7 @@
             document.getElementById('ghostText').textContent = v.endsWith('00') ? "" : (v.endsWith('0') ? "0" : "00");
         }
         
-        // 환산 완료 시 기준가는 자동 슬라이딩 모드가 아니므로 수동 플래그 해제 유지
         bp.dataset.manualDot = "false";
-        
-        // 입력 완료되었으므로 기준가 창의 가상 텍스트 숨김 투명 처리
         document.getElementById('ghostText').style.opacity = '0';
         
         adjustWidthCustom(bp, 'widthCalcSpan', '1.25rem');
