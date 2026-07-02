@@ -1,1 +1,463 @@
 
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>주식 타점 계산기</title>
+    <style>
+        :root {
+            --bg: #f4f7f6; --card: #ffffff; --primary: #2d3436; 
+            --input-border: #dfe6e9; --buy: #007bff; --sell: #e84118; --gray: #95a5a6;
+            --ghost: #adb5bd; --select-bg: #ffffff;
+        }
+        .dark-mode {
+            --bg: #1a1a1a; --card: #2d2d2d; --primary: #ecf0f1; 
+            --input-border: #444; --buy: #3498db; --sell: #ff7675; --gray: #888;
+            --ghost: #666; --select-bg: #3d3d3d;
+        }
+
+        body { font-family: 'Pretendard', sans-serif; background: var(--bg); margin: 0; padding: 20px; display: flex; justify-content: center; color: var(--primary); transition: 0.3s; }
+        .container { background: var(--card); padding: 25px; border-radius: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); width: 100%; max-width: 480px; position: relative; }
+        
+        .theme-switch { position: absolute; top: 20px; right: 20px; cursor: pointer; font-size: 1.5rem; background: none; border: none; z-index: 10; }
+        h2 { text-align: center; margin: 0 0 10px 0; font-size: 1.4rem; }
+        
+        .currency-toggle { display: flex; background: rgba(128,128,128,0.1); padding: 5px; border-radius: 15px; margin-bottom: 12px; }
+        .currency-toggle button { flex: 1; border: none; padding: 12px; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 1rem; color: var(--gray); background: transparent; }
+        .active-usd { background: var(--buy) !important; color: white !important; }
+        .active-krw { background: var(--sell) !important; color: white !important; }
+
+        .input-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 6px; font-weight: 700; font-size: 0.85rem; opacity: 0.8; }
+        
+        .field-wrapper { display: flex; align-items: center; background: rgba(128,128,128,0.05); border: 2px solid var(--input-border); border-radius: 15px; padding: 0 15px; height: 55px; box-sizing: border-box; cursor: text; transition: 0.2s; }
+        .field-wrapper:focus-within { border-color: var(--buy); background: rgba(0,123,255,0.05); }
+        
+        .clean-input { border: none; background: transparent; outline: none; color: var(--primary); font-family: inherit; font-size: 1.25rem; font-weight: 600; padding: 0; margin: 0; height: 100%; box-sizing: border-box; caret-color: var(--buy); }
+        .clean-input[type="number"]::-webkit-outer-spin-button, .clean-input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .clean-input[type="number"] { -moz-appearance: textfield; }
+        
+        .ghost-text { color: var(--ghost); font-weight: 600; font-size: 1.25rem; pointer-events: none; transition: opacity 0.1s ease; }
+        .option-group { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-size: 0.85rem; color: var(--gray); }
+
+        .history-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 15px; }
+        .history-table th { border-bottom: 2px solid var(--input-border); padding: 8px; color: var(--gray); }
+        .history-table td { padding: 10px 4px; border-bottom: 1px solid var(--input-border); text-align: center; }
+        .btn-del { color: var(--sell); cursor: pointer; border: none; background: none; font-size: 1.1rem; font-weight: bold;}
+        .sign-btn { border: none; color: white; font-weight: 900; border-radius: 8px; width: 28px; height: 28px; cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; transition: 0.1s; margin-right: 5px; }
+        
+        .row-save-btn { background: var(--primary); color: var(--card); border: none; padding: 5px 10px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 0.75rem; transition: 0.1s; }
+        .row-save-btn:hover { opacity: 0.8; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <button class="theme-switch" onclick="toggleTheme()">🌓</button>
+    <h2>🎯 주식 타점 계산기 </h2>
+    
+    <div class="currency-toggle">
+        <button id="btnUSD" class="active-usd" onclick="setCurrency('USD')">달러 ($)</button>
+        <button id="btnKRW" onclick="setCurrency('KRW')">원화 (₩)</button>
+    </div>
+
+    <div class="option-group" style="background: rgba(128,128,128,0.05); padding: 12px 15px; border-radius: 16px;">
+        <input type="checkbox" id="autoDecimal" checked onchange="handleAllInputsReset()">
+        <label for="autoDecimal" style="cursor:pointer; font-weight:700; opacity:0.9;">마지막 두 자리 소수점 자동 적용 (달러/등락률 공통)</label>
+    </div>
+
+    <div class="input-group" style="background: rgba(128,128,128,0.03); padding: 15px; border-radius: 18px; border: 1px dashed var(--input-border); margin-bottom: 20px;">
+        <label style="color: var(--gray); font-size: 0.8rem; margin-bottom: 8px;">🔄 현재가 ➔ 원래 가격(0%) 환산</label>
+        <div style="display: flex; gap: 6px; align-items: center;">
+            <div class="field-wrapper" style="flex: 1.3; height: 45px; padding: 0 10px;" onclick="document.getElementById('currPrice').focus()">
+                <span class="currPriceSymbol" style="font-weight:800; margin-right:3px; font-size:1rem;">$</span>
+                <input type="text" inputmode="decimal" id="currPrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px; font-size: 1rem;" onkeydown="interceptDotKey(event, this)" oninput="handleCurrPriceInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('currChange').focus();}">
+                <span id="currPriceGhostText" class="ghost-text" style="font-size: 1rem;">0.00</span>
+            </div>
+            
+            <div class="field-wrapper" style="flex: 1.3; height: 45px; padding: 0 8px;" onclick="document.getElementById('currChange').focus()">
+                <button id="changeSignBtn" type="button" tabindex="-1" class="sign-btn" style="background: var(--buy);" onclick="event.stopPropagation(); toggleChangeSign();">-</button>
+                <input type="text" inputmode="decimal" id="currChange" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px; font-size: 1rem;" onkeydown="interceptDotKey(event, this)" oninput="handleCurrChangeInput(event)" onkeydown="if(event.key==='Enter'){event.preventDefault();convertOriginalPrice();}">
+                <span id="currChangeGhostText" class="ghost-text" style="font-size: 1rem;">0.00</span>
+                <span style="font-weight:800; margin-left:3px; font-size:1rem; color: var(--gray);">%</span>
+            </div>
+            <button onclick="convertOriginalPrice()" style="background: var(--primary); color: var(--card); border: none; padding: 0 12px; border-radius: 12px; font-weight: bold; cursor: pointer; font-size: 0.85rem; height: 45px; white-space: nowrap;">환산</button>
+        </div>
+    </div>
+
+    <div class="input-group">
+        <label>기준 가격</label>
+        <div class="field-wrapper" onclick="document.getElementById('basePrice').focus()">
+            <span id="priceSymbol" style="font-weight:800; margin-right:5px; font-size:1.25rem;">$</span>
+            <input type="text" inputmode="decimal" id="basePrice" autocomplete="off" autocorrect="off" spellcheck="false" class="clean-input" style="width: 2px;" onkeydown="interceptDotKey(event, this); handlePriceKey(event);" oninput="handleBasePriceInput(event)">
+            <span id="ghostText" class="ghost-text">0.00</span>
+        </div>
+    </div>
+
+    <div id="stepTableContainer" style="margin-top: 20px; display: none; background: rgba(128,128,128,0.02); padding: 15px; border-radius: 18px; border: 1px solid rgba(128,128,128,0.08);">
+        <label style="font-weight:700; font-size:0.9rem; display: block; margin-bottom: 5px;">📊 1% 단위 분할 타점 (원하는 라인 지정 저장)</label>
+        <table class="history-table" style="margin-top: 5px;">
+            <thead>
+                <tr><th>간격</th><th style="color:var(--buy)">매수 (-)</th><th style="color:var(--sell)">매도 (+)</th><th>기록</th></tr>
+            </thead>
+            <tbody id="stepTableBody"></tbody>
+        </table>
+    </div>
+
+    <div class="history-section" style="margin-top:20px;">
+        <div style="display:flex; justify-content: space-between; align-items:center;">
+            <label style="font-weight:700; font-size:0.9rem;">📜 최근 저장 기록</label>
+            <button onclick="clearAllHistory()" style="background:none; border:none; color:var(--gray); cursor:pointer; font-size:0.75rem; text-decoration:underline;">전체 삭제</button>
+        </div>
+        <table class="history-table">
+            <thead>
+                <tr><th>시간</th><th>기준가</th><th>%</th><th>매수</th><th>매도</th><th></th></tr>
+            </thead>
+            <tbody id="historyBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let currency = 'USD';
+
+    function toggleTheme() { document.body.classList.toggle('dark-mode'); }
+
+    function toggleChangeSign() {
+        const btn = document.getElementById('changeSignBtn');
+        if (btn.innerText === '-') {
+            btn.innerText = '+';
+            btn.style.background = 'var(--sell)';
+        } else {
+            btn.innerText = '-';
+            btn.style.background = 'var(--buy)';
+        }
+    }
+
+    // [핵심 인터셉터] 온인풋 이전에 소수점 키를 가로채 완벽하게 홀드(Lock)시키는 함수
+    function interceptDotKey(e, el) {
+        if (e.key === '.') {
+            let currentVal = el.value.replace(/\./g, '');
+            if (currentVal.length > 0 && !el.value.includes('.')) {
+                e.preventDefault(); // 기존 온인풋 연산 일시정지
+                el.value = currentVal + '.'; // 45. 형태로 강제 고정
+                el.dataset.manualDot = "true"; // 수동모드 잠금 활성화
+                
+                // 가변폭 및 잔상 갱신 트리거 호출
+                if (el.id === 'basePrice') handleBasePriceInput(e);
+                else if (el.id === 'currPrice') handleCurrPriceInput(e);
+                else if (el.id === 'currChange') handleCurrChangeInput(e);
+            }
+        }
+    }
+
+    function resetConversionInputs() {
+        const cp = document.getElementById('currPrice');
+        const cc = document.getElementById('currChange');
+        
+        cp.value = '';
+        cc.value = '';
+        cp.dataset.manualDot = "false";
+        cc.dataset.manualDot = "false";
+        
+        const cpGhost = document.getElementById('currPriceGhostText');
+        const ccGhost = document.getElementById('currChangeGhostText');
+        cpGhost.textContent = (currency === 'USD' ? '0.00' : '0');
+        ccGhost.textContent = '0.00';
+        cpGhost.style.opacity = '1';
+        ccGhost.style.opacity = '1';
+        
+        cp.style.width = '2px';
+        cc.style.width = '2px';
+        
+        adjustWidthCustom(cp, 'currPriceWidthCalcSpan', '1rem');
+        adjustWidthCustom(cc, 'currChangeWidthCalcSpan', '1rem');
+    }
+
+    function setCurrency(type) {
+        currency = type;
+        document.getElementById('btnUSD').className = type === 'USD' ? 'active-usd' : '';
+        document.getElementById('btnKRW').className = type === 'KRW' ? 'active-krw' : '';
+        document.getElementById('priceSymbol').innerText = type === 'USD' ? '$' : '₩';
+        document.querySelectorAll('.currPriceSymbol').forEach(el => el.innerText = type === 'USD' ? '$' : '₩');
+        
+        document.getElementById('basePrice').value = '';
+        resetConversionInputs();
+        handleBasePriceInput();
+        document.getElementById('basePrice').focus();
+    }
+
+    function adjustWidthCustom(el, spanId, fontSize) {
+        let span = document.getElementById(spanId);
+        if(!span) {
+            span = document.createElement('span');
+            span.id = spanId;
+            span.style.visibility = 'hidden';
+            span.style.position = 'absolute';
+            span.style.whiteSpace = 'pre';
+            span.style.fontFamily = "Pretendard, sans-serif";
+            span.style.fontSize = fontSize || "1.25rem";
+            span.style.fontWeight = "600";
+            document.body.appendChild(span);
+        }
+        if (!el.value) {
+            el.style.width = '2px';
+        } else {
+            span.textContent = el.value;
+            el.style.width = Math.ceil(span.getBoundingClientRect().width) + 1 + 'px';
+        }
+    }
+
+    // 고도화된 정밀 소수점 가변 가공 엔진
+    function coreUniversalDecimalProcessor(el, ghostEl, isDecimalMode, e, callback) {
+        let autoDecEl = document.getElementById('autoDecimal');
+        let autoDec = autoDecEl ? autoDecEl.checked : false;
+
+        // 글자가 완전히 다 지워지거나 소수점이 사라지면 수동 락(Lock) 해제
+        if (!el.value || !el.value.includes('.')) {
+            el.dataset.manualDot = "false";
+        }
+
+        let val = el.value.replace(/[^0-9.]/g, '');
+        const dotParts = val.split('.');
+        if (dotParts.length > 2) val = dotParts[0] + '.' + dotParts.slice(1).join('');
+
+        let finalValue = '';
+        let ghostText = '';
+
+        // 수동 모드가 아닐 때만 원장님의 마지막 두 자리 자동 슬라이딩 적용
+        if (isDecimalMode && autoDec && el.dataset.manualDot !== "true") {
+            let justNumbers = val.replace(/\./g, '');
+            if (!justNumbers) {
+                finalValue = '';
+                ghostText = '0.00';
+            } else {
+                let len = justNumbers.length;
+                let num = parseInt(justNumbers, 10);
+                
+                if (len === 1) {
+                    finalValue = num.toString();
+                    ghostText = '.00';
+                } else if (len === 2) {
+                    finalValue = (num / 10).toFixed(1);
+                    ghostText = '0';
+                } else {
+                    finalValue = (num / 100).toFixed(2);
+                    ghostText = '';
+                }
+            }
+        } else {
+            // 사용자가 수동으로 온전한 점을 찍었거나 원화(KRW) 모드일 때 (문자열 그대로 매핑)
+            finalValue = val;
+            if (!val) {
+                ghostText = isDecimalMode ? '0.00' : '0';
+            } else {
+                if (!isDecimalMode) {
+                    ghostText = finalValue.endsWith('00') ? "" : (finalValue.endsWith('0') ? "0" : "00");
+                } else {
+                    if (!finalValue.includes('.')) ghostText = ".00";
+                    else if (finalValue.endsWith('.')) ghostText = "00";
+                    else if (finalValue.split('.')[1].length === 1) ghostText = "0";
+                    else ghostText = "";
+                }
+            }
+        }
+
+        el.value = finalValue;
+        ghostEl.textContent = ghostText;
+
+        // [요구사항] 한 글자라도 들어오면 거슬리는 가상 가이드 텍스트 즉시 숨김
+        if (el.value.length > 0) {
+            ghostEl.style.opacity = '0';
+        } else {
+            ghostEl.style.opacity = '1';
+        }
+
+        if (callback) callback();
+    }
+
+    function handleBasePriceInput(e) {
+        let el = document.getElementById('basePrice');
+        let ghostEl = document.getElementById('ghostText');
+        
+        // 사용자가 메인 기준가를 수정하기 시작하면 상단 환산 필드 영역 시각적 전면 리셋
+        if (e && (e.type === 'input' || e.type === 'keydown')) {
+            resetConversionInputs();
+        }
+
+        coreUniversalDecimalProcessor(el, ghostEl, (currency === 'USD'), e, () => {
+            adjustWidthCustom(el, 'widthCalcSpan', '1.25rem');
+            updateLiveResults();
+        });
+    }
+
+    function handleCurrPriceInput(e) {
+        let el = document.getElementById('currPrice');
+        let ghostEl = document.getElementById('currPriceGhostText');
+        coreUniversalDecimalProcessor(el, ghostEl, (currency === 'USD'), e, () => {
+            adjustWidthCustom(el, 'currPriceWidthCalcSpan', '1rem');
+        });
+    }
+
+    function handleCurrChangeInput(e) {
+        let el = document.getElementById('currChange');
+        let ghostEl = document.getElementById('currChangeGhostText');
+        coreUniversalDecimalProcessor(el, ghostEl, true, e, () => {
+            adjustWidthCustom(el, 'currChangeWidthCalcSpan', '1rem');
+        });
+    }
+
+    function handleAllInputsReset() {
+        document.getElementById('basePrice').dataset.manualDot = "false";
+        handleBasePriceInput();
+        resetConversionInputs();
+    }
+
+    function getTickSize(price) {
+        if (currency === 'USD') return 0.01;
+        if (price < 2000) return 1; if (price < 5000) return 5; if (price < 20000) return 10;
+        if (price < 50000) return 50; if (price < 200000) return 100; if (price < 500000) return 500;
+        return 1000;
+    }
+
+    function calculateTargets(price, pct) {
+        const tick = getTickSize(price);
+        let buyNum = Math.round((price * (1 - pct / 100)) / tick) * tick;
+        let sellNum = Math.round((price * (1 + pct / 100)) / tick) * tick;
+        return { buyNum, sellNum };
+    }
+
+    function updateLiveResults() {
+        let val = document.getElementById('basePrice').value;
+        if (!val || isNaN(parseFloat(val))) {
+            document.getElementById('stepTableContainer').style.display = 'none';
+            return;
+        }
+        let price = parseFloat(val);
+        displayStepTable(price);
+    }
+
+    function displayStepTable(price) {
+        const container = document.getElementById('stepTableContainer');
+        const tbody = document.getElementById('stepTableBody');
+        container.style.display = 'block';
+        
+        let html = '';
+        const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
+        
+        for (let i = 1; i <= 10; i++) {
+            let targets = calculateTargets(price, i);
+            html += `
+                <tr>
+                    <td style="font-weight:700; color:var(--gray);">${i}%</td>
+                    <td style="font-weight:700; color:var(--buy)">${targets.buyNum.toLocaleString(undefined, format)}</td>
+                    <td style="font-weight:700; color:var(--sell)">${targets.sellNum.toLocaleString(undefined, format)}</td>
+                    <td><button type="button" tabindex="-1" class="row-save-btn" onclick="addStepHistory(${price}, ${i}, ${targets.buyNum}, ${targets.sellNum})">저장</button></td>
+                </tr>
+            `;
+        }
+        tbody.innerHTML = html;
+    }
+
+    function addStepHistory(price, pct, buyNum, sellNum) {
+        const format = currency === 'USD' ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 };
+        const record = { 
+            id: Date.now(), 
+            time: new Date().toLocaleTimeString('ko-KR', {hour12:false, hour:'2-digit', minute:'2-digit'}), 
+            price, 
+            pct, 
+            buy: buyNum.toLocaleString(undefined, format), 
+            sell: sellNum.toLocaleString(undefined, format), 
+            currency 
+        };
+        
+        let history = JSON.parse(localStorage.getItem('stockHistory') || '[]');
+        history.unshift(record);
+        if(history.length > 8) history.pop();
+        localStorage.setItem('stockHistory', JSON.stringify(history));
+        displayHistory();
+        
+        const bp = document.getElementById('basePrice');
+        bp.focus();
+        bp.select();
+    }
+
+    function convertOriginalPrice() {
+        let val = document.getElementById('currPrice').value;
+        let changeInput = document.getElementById('currChange').value;
+        
+        if (!val || !changeInput) {
+            alert("현재가와 등락률을 모두 입력해주세요.");
+            return;
+        }
+        
+        let rawChange = parseFloat(changeInput);
+        let sign = document.getElementById('changeSignBtn').innerText === '-' ? -1 : 1;
+        let currChange = Math.abs(rawChange) * sign;
+        
+        let currPrice = parseFloat(val);
+        if (currency === 'KRW' && !val.includes('.')) {
+            if (!val.endsWith('00')) {
+                currPrice *= (val.endsWith('0') ? 10 : 100);
+            }
+        }
+        
+        const originalPrice = currPrice / (1 + (currChange / 100));
+        const bp = document.getElementById('basePrice');
+        
+        if (currency === 'USD') {
+            bp.value = originalPrice.toFixed(2);
+            document.getElementById('ghostText').textContent = '';
+        } else {
+            bp.value = Math.round(originalPrice).toString();
+            let v = bp.value;
+            document.getElementById('ghostText').textContent = v.endsWith('00') ? "" : (v.endsWith('0') ? "0" : "00");
+        }
+        
+        bp.dataset.manualDot = "false";
+        document.getElementById('ghostText').style.opacity = '0';
+        
+        adjustWidthCustom(bp, 'widthCalcSpan', '1.25rem');
+        updateLiveResults();
+        
+        bp.focus();
+        bp.select();
+    }
+
+    function handlePriceKey(e) { 
+        if (e.key === 'Enter') {
+            e.preventDefault();
+        }
+    }
+
+    function displayHistory() {
+        const history = JSON.parse(localStorage.getItem('stockHistory') || '[]');
+        document.getElementById('historyBody').innerHTML = history.map(h => `
+            <tr>
+                <td>${h.time}</td>
+                <td>${h.currency==='USD'?'$':'₩'}${h.price.toLocaleString(undefined, h.currency==='USD'?{minimumFractionDigits:2}:{})}</td>
+                <td>${h.pct}%</td>
+                <td style="font-weight:700; color:var(--buy)">${h.buy}</td>
+                <td style="font-weight:700; color:var(--sell)">${h.sell}</td>
+                <td><button class="btn-del" onclick="deleteHistory(${h.id})">×</button></td>
+            </tr>
+        `).join('');
+    }
+
+    function deleteHistory(id) {
+        let history = JSON.parse(localStorage.getItem('stockHistory') || '[]');
+        localStorage.setItem('stockHistory', JSON.stringify(history.filter(h => h.id !== id)));
+        displayHistory();
+    }
+
+    function clearAllHistory() { if(confirm("기록을 삭제하시겠습니까?")) { localStorage.removeItem('stockHistory'); displayHistory(); } }
+
+    window.onload = () => { 
+        displayHistory(); 
+        handleAllInputsReset();
+    };
+    document.querySelectorAll('input').forEach(i => i.addEventListener('focus', function() { this.select(); }));
+</script>
+</body>
+</html>
