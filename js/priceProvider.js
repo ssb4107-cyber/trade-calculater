@@ -81,6 +81,12 @@
             ["SLV", "iShares Silver Trust", "NYSE"],
             ["AGQ", "ProShares Ultra Silver", "NYSE"],
             ["ZSL", "ProShares UltraShort Silver", "NYSE"]
+        ],
+        SOXL: [
+            ["SOXL", "Direxion Daily Semiconductor Bull 3X Shares", "NYSE"]
+        ],
+        KORU: [
+            ["KORU", "Direxion Daily MSCI South Korea Bull 3X Shares", "NYSE"]
         ]
     };
 
