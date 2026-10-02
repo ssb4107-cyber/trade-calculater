@@ -443,6 +443,7 @@ function renderStocks() {
 
         selectButton.type = "button";
         selectButton.className = "stock-card";
+        selectButton.title = getStockDisplayName(stock);
         selectButton.dataset.stockId = getStockKey(stock);
         selectButton.innerHTML = `
             <strong>${escapeHtml(getStockDisplayName(stock))}</strong>

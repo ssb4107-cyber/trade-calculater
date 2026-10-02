@@ -35,6 +35,7 @@ html,
 body{
     width:100%;
     height:100%;
+    height:100dvh;
     overflow:hidden;
     background:var(--bg);
     color:var(--text);
@@ -68,13 +69,14 @@ button:disabled{
 
 .layout{
     display:flex;
-    width:100vw;
-    height:100vh;
+    width:100%;
+    height:100%;
+    min-height:0;
     background:var(--bg);
 }
 
 .sidebar{
-    width:280px;
+    width:clamp(180px,16vw,240px);
     background:linear-gradient(180deg,#111827 0%,#1e293b 100%);
     color:white;
     display:flex;
@@ -90,11 +92,12 @@ button:disabled{
 }
 
 .logo{
+    flex-shrink:0;
     min-height:96px;
-    padding:26px 20px;
+    padding:24px 12px;
     border-bottom:1px solid rgba(255,255,255,.08);
     display:flex;
-    gap:14px;
+    gap:10px;
     align-items:center;
 }
 
@@ -111,7 +114,7 @@ button:disabled{
 }
 
 .logo h2{
-    font-size:21px;
+    font-size:clamp(16px,1.4vw,21px);
     font-weight:800;
     white-space:nowrap;
 }
@@ -167,6 +170,9 @@ button:disabled{
 }
 
 nav{
+    flex:1;
+    min-height:0;
+    overflow:auto;
     display:flex;
     flex-direction:column;
     padding:68px 16px 16px;
@@ -233,6 +239,7 @@ nav{
 .content{
     flex:1;
     min-width:0;
+    min-height:0;
     background:var(--bg);
     padding:26px;
     overflow:auto;
@@ -240,10 +247,16 @@ nav{
 }
 
 .app-content{
+    display:flex;
     padding:0;
+    overflow:hidden;
 }
 
 #pageFrame{
+    display:block;
+    flex:1;
+    min-width:0;
+    min-height:0;
     width:100%;
     height:100%;
     border:none;
@@ -261,7 +274,7 @@ nav{
 }
 
 .portfolio-body{
-    height:100vh;
+    height:100%;
     overflow:hidden;
 }
 
@@ -270,12 +283,13 @@ nav{
 }
 
 .portfolio-layout{
-    height:100vh;
+    height:100%;
     background:var(--bg);
 }
 
 .portfolio-sidebar{
-    width:300px;
+    width:clamp(220px,23vw,280px);
+    min-height:0;
     background:linear-gradient(180deg,#172033 0%,#263449 100%);
 }
 
@@ -489,6 +503,9 @@ nav{
 
 .stock-card strong{
     display:block;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
     font-size:19px;
     font-weight:900;
 }
@@ -591,10 +608,16 @@ nav{
 }
 
 .portfolio-content{
+    container-type:inline-size;
+    container-name:portfolio;
     display:flex;
     flex-direction:column;
     gap:26px;
     overflow:auto;
+}
+
+.portfolio-content > *{
+    flex-shrink:0;
 }
 
 .portfolio-header{
@@ -604,6 +627,12 @@ nav{
     align-items:stretch;
 }
 
+.portfolio-header > div:first-child{
+    flex:1;
+    min-width:0;
+    overflow-wrap:anywhere;
+}
+
 .eyebrow{
     color:var(--muted);
     font-size:15px;
@@ -611,7 +640,8 @@ nav{
 }
 
 .portfolio-header h1{
-    font-size:42px;
+    overflow-wrap:anywhere;
+    font-size:clamp(28px,3vw,42px);
     margin:4px 0 8px;
 }
 
@@ -622,7 +652,8 @@ nav{
 
 .price-panel{
     position:relative;
-    min-width:330px;
+    min-width:min(100%,330px);
+    flex-shrink:0;
     display:flex;
     justify-content:space-between;
     gap:20px;
@@ -649,10 +680,7 @@ nav{
 }
 
 .api-status{
-    position:absolute;
-    right:18px;
-    top:14px;
-    margin-top:0;
+    margin-top:10px;
     font-size:15px;
     font-weight:900;
 }
@@ -663,7 +691,7 @@ nav{
 
 .dashboard{
     display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+    grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));
     gap:18px;
 }
 
@@ -682,6 +710,7 @@ nav{
 }
 
 .dash-card strong{
+    overflow-wrap:anywhere;
     display:block;
     margin-top:12px;
     font-size:28px;
@@ -731,7 +760,7 @@ nav{
 
 .position-list{
     display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(320px,420px));
+    grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),420px));
     gap:20px;
     align-items:start;
 }
@@ -840,6 +869,8 @@ nav{
 }
 
 .info-value{
+    min-width:0;
+    overflow-wrap:anywhere;
     font-weight:900;
     font-size:19px;
     text-align:right;
@@ -972,6 +1003,8 @@ nav{
 }
 
 .modal-content{
+    max-height:100%;
+    overflow:auto;
     width:540px;
     max-width:100%;
     background:var(--surface);
@@ -994,6 +1027,7 @@ nav{
 
 .button-row{
     display:flex;
+    flex-wrap:wrap;
     justify-content:flex-end;
     gap:10px;
     margin-top:20px;
@@ -1239,50 +1273,108 @@ nav{
     transform:translateY(0);
 }
 
-@media (max-width: 900px){
-    .layout{
-        flex-direction:column;
-    }
+/* Keep navigation mode consistent across the shell and its iframe. */
+.compact-layout .layout{
+    flex-direction:column;
+}
 
-    .sidebar,
-    .portfolio-sidebar{
-        width:100%;
-        height:auto;
-    }
+.compact-layout .sidebar,
+.compact-layout .sidebar-collapsed .app-sidebar{
+    width:100%;
+    height:auto;
+}
 
-    .sidebar-collapsed .app-sidebar{
-        width:100%;
-    }
+.compact-layout .logo{
+    min-height:60px;
+    padding:10px 16px;
+}
 
-    .logo{
-        min-height:74px;
-    }
+.compact-layout .logo-mark{
+    width:40px;
+    height:40px;
+}
 
-    .sidebar-toggle{
-        top:18px;
-    }
+.compact-layout .sidebar-toggle{
+    top:10px;
+    right:14px;
+}
 
-    nav,
-    .stock-list{
-        flex-direction:row;
-        overflow:auto;
-        padding:14px;
-    }
+.compact-layout nav{
+    flex-direction:row;
+    padding:10px;
+    overflow:auto;
+}
 
-    .stock-list{
-        flex:0 0 auto;
-        overflow-x:auto;
-        overflow-y:hidden;
-    }
+.compact-layout .menu{
+    height:48px;
+    min-height:48px;
+    max-height:48px;
+    font-size:16px;
+    padding:0 12px;
+}
 
-    .stock-row{
-        min-width:170px;
-    }
+.compact-layout .portfolio-sidebar .header{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding:12px 14px;
+}
 
-    .content{
-        padding:18px;
-    }
+.compact-layout .portfolio-sidebar h2{
+    margin:0;
+    font-size:20px;
+    flex:1;
+}
 
+.compact-layout .sidebar-action{
+    width:auto;
+    min-height:44px;
+    font-size:15px;
+}
+
+.compact-layout .stock-filter{
+    display:flex;
+    gap:10px;
+    align-items:center;
+    padding:10px 14px;
+}
+
+.compact-layout .stock-filter label{
+    margin:0;
+    flex-shrink:0;
+}
+
+.compact-layout .stock-filter input{
+    min-width:0;
+}
+
+.compact-layout .stock-list{
+    flex:0 0 auto;
+    flex-direction:row;
+    overflow-x:auto;
+    overflow-y:hidden;
+    padding:10px 14px;
+}
+
+.compact-layout .stock-row{
+    width:170px;
+    min-width:170px;
+}
+
+.compact-layout .content{
+    padding:16px;
+}
+
+.compact-layout .app-content{
+    padding:0;
+}
+
+.settings-body{
+    height:auto;
+    overflow:visible;
+}
+
+@container portfolio (max-width: 660px){
     .portfolio-header,
     .trade-item{
         flex-direction:column;
@@ -1291,16 +1383,52 @@ nav{
 
     .price-panel{
         min-width:0;
-        flex-direction:column;
-        align-items:stretch;
+    }
+}
+
+@container portfolio (max-width: 400px){
+    .portfolio-header p{
+        font-size:16px;
     }
 
-    .position-list{
-        grid-template-columns:1fr;
+    .position-card{
+        padding:18px;
     }
 
+    .info-item,
+    .tag-list{
+        flex-wrap:wrap;
+    }
+
+    .position-actions button{
+        flex:1 1 auto;
+    }
+}
+
+@media (max-width: 600px){
     .calculator-grid,
     .settings-grid{
         grid-template-columns:1fr;
+    }
+
+    .calculator-page{
+        padding:16px;
+    }
+
+    .calculator-card,
+    .settings-card{
+        padding:18px;
+    }
+
+    .calculator-card{
+        overflow-x:auto;
+    }
+
+    .modal{
+        padding:12px;
+    }
+
+    .modal-content{
+        padding:20px;
     }
 }
