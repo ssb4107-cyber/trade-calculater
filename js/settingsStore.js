@@ -8,6 +8,7 @@ const SilverSettings = (() => {
         apiRefreshIntervalMinutes: 5,
         pinnedSymbols: [],
         stockOrder: [],
+        manuallyOrderedStocks: null,
         recentSymbols: [],
         priceUpdatedAtBySymbol: {},
         priceCacheBySymbol: {},

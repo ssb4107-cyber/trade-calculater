@@ -316,36 +316,39 @@ function getOrderedStocks() {
     const settings = SilverSettings.load();
     const pinned = settings.pinnedSymbols || [];
     const order = settings.stockOrder || [];
+    // Existing saved orders remain manual until the user changes them.
+    const manual = settings.manuallyOrderedStocks ?? order;
     const recent = settings.recentSymbols || [];
-
-    return stocks
-        .slice()
+    const indexOfStock = (items, stock) => {
+        const index = items.indexOf(getStockKey(stock));
+        return index !== -1 ? index : (stock.symbol ? items.indexOf(stock.symbol) : -1);
+    };
+    const rank = index => index === -1 ? Infinity : index;
+    const isPinned = stock => indexOfStock(pinned, stock) !== -1;
+    const pinnedStocks = stocks.filter(isPinned).sort((a, b) => {
+        const difference = rank(indexOfStock(order, a)) - rank(indexOfStock(order, b));
+        return (Number.isNaN(difference) ? 0 : difference)
+            || indexOfStock(pinned, a) - indexOfStock(pinned, b);
+    });
+    const unpinnedStocks = stocks.filter(stock => !isPinned(stock));
+    const savedUnpinned = order.map(key => unpinnedStocks.find(stock =>
+        getStockKey(stock) === key || (stock.symbol && stock.symbol === key)
+    )).filter((stock, index, items) => stock && items.indexOf(stock) === index);
+    const fixedSlots = new Map();
+    savedUnpinned.forEach((stock, index) => {
+        if (indexOfStock(manual, stock) !== -1) fixedSlots.set(index, stock);
+    });
+    const fixedStocks = new Set(fixedSlots.values());
+    const automaticStocks = unpinnedStocks.filter(stock => !fixedStocks.has(stock))
         .sort((a, b) => {
-            const aKey = getStockKey(a);
-            const bKey = getStockKey(b);
-            const aPinned = pinned.includes(aKey) || pinned.includes(a.symbol);
-            const bPinned = pinned.includes(bKey) || pinned.includes(b.symbol);
-
-            if (aPinned !== bPinned) return aPinned ? -1 : 1;
-
-            const aOrder = order.includes(aKey) ? order.indexOf(aKey) : order.indexOf(a.symbol);
-            const bOrder = order.includes(bKey) ? order.indexOf(bKey) : order.indexOf(b.symbol);
-
-            if (aOrder !== -1 || bOrder !== -1) {
-                return (aOrder === -1 ? 999 : aOrder)
-                    - (bOrder === -1 ? 999 : bOrder);
-            }
-
-            const aRecent = recent.includes(aKey) ? recent.indexOf(aKey) : recent.indexOf(a.symbol);
-            const bRecent = recent.includes(bKey) ? recent.indexOf(bKey) : recent.indexOf(b.symbol);
-
-            if (aRecent !== -1 || bRecent !== -1) {
-                return (aRecent === -1 ? 999 : aRecent)
-                    - (bRecent === -1 ? 999 : bRecent);
-            }
-
-            return getStockDisplayName(a).localeCompare(getStockDisplayName(b));
+            const difference = rank(indexOfStock(recent, a)) - rank(indexOfStock(recent, b));
+            return (Number.isNaN(difference) ? 0 : difference)
+                || getStockDisplayName(a).localeCompare(getStockDisplayName(b));
         });
+    let automaticIndex = 0;
+    return [...pinnedStocks, ...unpinnedStocks.map((_, index) =>
+        fixedSlots.get(index) || automaticStocks[automaticIndex++]
+    )];
 }
 
 function rememberRecentStock(stock) {
@@ -373,11 +376,23 @@ function togglePinnedStock(stock) {
 }
 
 function saveStockOrderFromDom() {
-    const stockOrder = Array.from(dom.stockList.querySelectorAll(".stock-row"))
-        .map(item => item.dataset.stockId)
-        .filter(Boolean);
-
-    SilverSettings.update({ stockOrder });
+    if (!draggedSymbol) return;
+    const settings = SilverSettings.load();
+    const visibleOrder = Array.from(dom.stockList.querySelectorAll(".stock-row"))
+        .map(item => item.dataset.stockId).filter(Boolean);
+    const visibleKeys = new Set(visibleOrder);
+    const previousOrder = getOrderedStocks().map(getStockKey);
+    let visibleIndex = 0;
+    // Replace only visible slots so filtering never erases hidden stock settings.
+    const stockOrder = previousOrder.map(key =>
+        visibleKeys.has(key) ? visibleOrder[visibleIndex++] : key
+    );
+    if (stockOrder.every((key, index) => key === previousOrder[index])) return;
+    const manuallyOrderedStocks = [...new Set([
+        ...(settings.manuallyOrderedStocks ?? settings.stockOrder ?? []),
+        draggedSymbol
+    ])];
+    SilverSettings.update({ stockOrder, manuallyOrderedStocks });
 }
 
 function renderStocks() {
@@ -1270,8 +1285,9 @@ function bindEvents() {
 
     dom.stockList.addEventListener("dragend", event => {
         event.target.closest(".stock-row")?.classList.remove("dragging");
-        draggedSymbol = null;
         saveStockOrderFromDom();
+        draggedSymbol = null;
+        renderStocks();
     });
 
     dom.stockList.addEventListener("dragover", event => {
@@ -1282,8 +1298,16 @@ function bindEvents() {
         event.preventDefault();
 
         const draggedRow = dom.stockList.querySelector(`[data-stock-id="${draggedSymbol}"]`);
+        if (!draggedRow) return;
+        // Pinning defines a separate group; dragging must not silently change it.
+        const targetPinned = row.querySelector(".pin-stock-btn").classList.contains("pinned");
+        const draggedPinned = draggedRow.querySelector(".pin-stock-btn").classList.contains("pinned");
+        if (targetPinned !== draggedPinned) return;
         const box = row.getBoundingClientRect();
-        const after = event.clientY > box.top + box.height / 2;
+        const horizontal = getComputedStyle(dom.stockList).flexDirection === "row";
+        const after = horizontal
+            ? event.clientX > box.left + box.width / 2
+            : event.clientY > box.top + box.height / 2;
 
         if (after) {
             row.after(draggedRow);
