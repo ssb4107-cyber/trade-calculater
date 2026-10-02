@@ -280,6 +280,7 @@ nav{
 }
 
 .portfolio-sidebar .header{
+    flex-shrink:0;
     padding:24px 18px 16px;
     border-bottom:1px solid rgba(255,255,255,.08);
 }
@@ -307,6 +308,7 @@ nav{
 }
 
 .stock-filter{
+    flex-shrink:0;
     padding:14px;
     border-bottom:1px solid rgba(255,255,255,.08);
 }
@@ -428,6 +430,10 @@ nav{
 }
 
 .stock-list{
+    flex:1 1 0;
+    min-height:0;
+    overflow-y:auto;
+    overflow-x:hidden;
     display:flex;
     flex-direction:column;
     gap:8px;
@@ -435,6 +441,7 @@ nav{
 }
 
 .stock-row{
+    flex-shrink:0;
     position:relative;
     display:block;
 }
@@ -1260,6 +1267,12 @@ nav{
         flex-direction:row;
         overflow:auto;
         padding:14px;
+    }
+
+    .stock-list{
+        flex:0 0 auto;
+        overflow-x:auto;
+        overflow-y:hidden;
     }
 
     .stock-row{
