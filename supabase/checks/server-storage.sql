@@ -37,12 +37,18 @@ begin
       or not has_function_privilege('authenticated', function_name, 'EXECUTE') then
       raise exception 'Unexpected function access: %', function_name;
     end if;
+    if (select prosecdef from pg_proc where oid = to_regprocedure(function_name)) then
+      raise exception 'Privileged function exposed in public schema: %', function_name;
+    end if;
   end loop;
 
   if to_regprocedure('public.silver_validate_document(text,jsonb)') is null
     or has_function_privilege('anon', 'public.silver_validate_document(text,jsonb)', 'EXECUTE')
     or has_function_privilege('authenticated', 'public.silver_validate_document(text,jsonb)', 'EXECUTE') then
     raise exception 'Unexpected validation function access';
+  end if;
+  if has_schema_privilege('anon', 'silver_private', 'USAGE') then
+    raise exception 'Unexpected anonymous access to private storage functions';
   end if;
 end $$;
 

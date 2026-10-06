@@ -2,6 +2,12 @@ import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 
 const allowed = (Deno.env.get("ALLOWED_ORIGINS") || "https://ssb4107-cyber.github.io").split(",").map(value => value.trim());
 const cache = new Map<string, { at: number; data: unknown }>();
+const projectUrl = Deno.env.get("SUPABASE_URL") || "";
+let projectKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+try {
+  const configured = JSON.parse(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") || "{}").default;
+  if (typeof configured === "string" && configured) projectKey = configured;
+} catch { /* Existing projects can continue using their legacy public key. */ }
 Deno.serve(async req => {
   const origin = req.headers.get("Origin") || "";
   const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": allowed.includes(origin) ? origin : "",
@@ -12,7 +18,8 @@ Deno.serve(async req => {
   if (req.method !== "POST") return reply(405, { error: "POST required" });
   const authorization = req.headers.get("Authorization") || "";
   if (!authorization.startsWith("Bearer ")) return reply(401, { error: "Login required" });
-  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
+  if (!projectUrl || !projectKey) return reply(503, { error: "Authentication not configured" });
+  const supabase = createClient(projectUrl, projectKey, {
     global: { headers: { Authorization: authorization } }, auth: { persistSession: false, autoRefreshToken: false }
   });
   const { data: user, error: authError } = await supabase.auth.getUser();

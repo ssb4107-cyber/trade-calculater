@@ -13,7 +13,10 @@ const { PGlite } = require("@electric-sql/pglite");
         create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
         grant usage on schema auth to authenticated, anon;
         insert into auth.users values ('${a}'), ('${b}');`);
-    await db.exec(fs.readFileSync(path.join(__dirname, "../supabase/migrations/202610060001_server_storage.sql"), "utf8"));
+    const migrations = path.join(__dirname, "../supabase/migrations");
+    for (const file of fs.readdirSync(migrations).filter(file => file.endsWith(".sql")).sort()) {
+        await db.exec(fs.readFileSync(path.join(migrations, file), "utf8"));
+    }
     await db.exec(fs.readFileSync(path.join(__dirname, "../supabase/checks/server-storage.sql"), "utf8"));
     const asUser = async id => {
         await db.exec("reset role; set role authenticated;");
@@ -34,6 +37,7 @@ const { PGlite } = require("@electric-sql/pglite");
     assert.equal(second.document.version, 2);
     await asUser(b);
     assert.equal(await scalar("select public.silver_read_operation($1::uuid) as value", [token]), null);
+    assert.equal(await scalar("select silver_private.silver_read_operation($1::uuid) as value", [token]), null);
     assert.deepEqual((await db.query("select * from public.silver_read_all()")).rows, []);
     assert.equal(await scalar("select public.silver_read_document('portfolioStocks') as value"), null);
     assert.equal((await write("portfolioStocks", [{ id: "C", positions: [] }], 0)).document.owner_id, b);
@@ -49,6 +53,7 @@ const { PGlite } = require("@electric-sql/pglite");
     ]) await assert.rejects(write("portfolioStocks", bad, 2));
     await assert.rejects(write("silverStrategySettings", { finnhubApiKey: "not-a-server-secret" }, 0));
     await db.exec("reset role; set role anon;");
+    await assert.rejects(db.query("select silver_private.silver_read_operation($1::uuid)", [token]), /permission denied/);
     await assert.rejects(db.query("select * from public.silver_documents"), /permission denied/);
     await assert.rejects(db.query("select public.silver_read_all()"), /permission denied/);
     await asUser(a);

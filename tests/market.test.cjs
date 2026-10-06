@@ -5,13 +5,14 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { stripTypeScriptTypes } = require("node:module");
 function edge(options = {}) {
-    let handler, calls = 0;
+    let handler, calls = 0, clientKey;
     const source = stripTypeScriptTypes(fs.readFileSync(path.join(__dirname, "../supabase/functions/market-data/index.ts"), "utf8")).replace(/^import .*;$/m, "");
     const context = vm.createContext({ Request, Response, URL, AbortSignal, Number, Date, Map,
-        Deno: { env: { get: key => ({ SUPABASE_URL: "https://example.test", SUPABASE_ANON_KEY: "test-public", FINNHUB_API_KEY: options.missingKey ? "" : "test-private" })[key] }, serve: callback => handler = callback },
-        createClient: (_url, _key, config) => ({ auth: { getUser: async () => config.global.headers.Authorization === "Bearer valid"
+        Deno: { env: { get: key => ({ SUPABASE_URL: "https://example.test", SUPABASE_ANON_KEY: options.noLegacyKey ? "" : "test-public",
+            SUPABASE_PUBLISHABLE_KEYS: options.publishableKeys, FINNHUB_API_KEY: options.missingKey ? "" : "test-private" })[key] }, serve: callback => handler = callback },
+        createClient: (_url, _key, config) => { clientKey = _key; return { auth: { getUser: async () => config.global.headers.Authorization === "Bearer valid"
             ? { data: { user: { id: "A" } }, error: null } : { data: { user: null }, error: {} } },
-            rpc: async () => ({ data: !options.deniedQuota, error: null }) }),
+            rpc: async () => ({ data: !options.deniedQuota, error: null }) }; },
         fetch: async url => { calls++; assert.equal(url.hostname, "finnhub.io"); assert.equal(url.searchParams.get("token"), "test-private");
             return options.failure ? new Response("upstream secret must not be exposed", { status: 500 })
                 : new Response(JSON.stringify(url.pathname.endsWith("quote") ? { c: 25, t: 123, privateField: "discard" }
@@ -21,8 +22,20 @@ function edge(options = {}) {
     const invoke = (body = { action: "quote", symbol: "A" }, token = "valid", origin = "https://ssb4107-cyber.github.io", method = "POST") => handler(new Request("https://example.test/market-data", {
         method, headers: { Origin: origin, Authorization: "Bearer " + token, "Content-Type": "application/json" }, body: method === "POST" ? JSON.stringify(body) : undefined
     }));
-    return { invoke, calls: () => calls };
+    return { invoke, calls: () => calls, clientKey: () => clientKey };
 }
+
+test("market authenticates with modern public keys and retains legacy compatibility", async () => {
+    const modern = edge({ noLegacyKey: true, publishableKeys: '{"default":"sb_publishable_test"}' });
+    assert.equal((await modern.invoke()).status, 200);
+    assert.equal(modern.clientKey(), "sb_publishable_test");
+    const fallback = edge({ publishableKeys: "invalid-json" });
+    assert.equal((await fallback.invoke()).status, 200);
+    assert.equal(fallback.clientKey(), "test-public");
+    const absent = edge({ noLegacyKey: true });
+    assert.equal((await absent.invoke()).status, 503);
+    assert.equal(absent.calls(), 0);
+});
 test("market rejects missing/invalid auth even when a cached quote exists", async () => {
     const app = edge(); assert.equal((await app.invoke()).status, 200);
     assert.equal((await app.invoke(undefined, "invalid")).status, 401);
