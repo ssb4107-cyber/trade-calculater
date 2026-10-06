@@ -28,6 +28,7 @@ const server = http.createServer((req, res) => {
         // Never serve the repository's real API key during tests.
         res.end(file.endsWith("appConfig.js")
             ? 'const SilverAppConfig = { DEFAULT_FINNHUB_API_KEY: "" };'
+            : file.endsWith("backendConfig.js") ? 'const SilverBackendConfig = {};'
             : fs.readFileSync(file));
     } catch { res.writeHead(404); res.end(); }
 });
@@ -277,8 +278,14 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
     });
 
     await check("F04 concurrent sales validate latest quantity before committing", async () => {
-        const { page, open, alerts } = await scenario([stock("A", { positions: [position(1)] })]);
+        const { page, open } = await scenario([stock("A", { positions: [position(1)] })]);
         const second = await open();
+        // Background-tab native dialogs can be suppressed by Chromium. Record
+        // the application's warning call, while verifying real form/save state.
+        for (const target of [page, second]) await target.evaluate(() => {
+            window.recordedSaleAlerts = [];
+            window.alert = message => window.recordedSaleAlerts.push(String(message));
+        });
         const sellDraft = page => page.evaluate(async () => {
             openTradeModal(getStock().positions[0]);
             dom.sellPrice.value = "12";
@@ -289,7 +296,9 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         const item = (await saved(page))[0].positions[0];
         assert.equal(item.trades.length, 1);
         assert.equal(item.remainQty, 0.25);
-        assert(alerts.some(message => message.includes("보유수량을 초과")));
+        const alerts = (await Promise.all([page, second].map(target => target.evaluate(() => window.recordedSaleAlerts)))).flat();
+        assert(alerts.some(message => message.includes("보유수량을 초과")), JSON.stringify({ alerts }));
+        assert.equal((await Promise.all([page, second].map(target => target.locator("#tradeModal").isVisible()))).filter(Boolean).length, 1);
     });
 
     await check("F04 concurrent valid sales both survive with unique trade ids", async () => {
@@ -416,6 +425,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         const context = await browser.newContext();
         contexts.push(context);
         await context.route("https://**/*", route => route.abort());
+        await context.route("**/backendConfig.js", route => route.fulfill({ contentType: "text/javascript", body: "const SilverBackendConfig = {};" }));
         const page = await context.newPage();
         await page.goto(pathToFileURL(path.join(root, "pages/calculator.html")).href);
         assert.equal(await page.evaluate(() => Boolean(navigator.locks)), true);

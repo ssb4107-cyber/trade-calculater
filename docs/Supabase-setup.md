@@ -1,6 +1,8 @@
 # Supabase 적용 안내
 
-현재 상태: 로그인·서버 저장·자료 이전·시세 서버 코드 구현 완료. 실제 Supabase 프로젝트는 아직 생성/적용하지 않았습니다. `js/backendConfig.js`가 비어 있으므로 현재 코드를 실행하면 기존 로컬 저장 방식이 사용됩니다. 서버 전환 완료로 판단하면 안 됩니다.
+현재 상태(2026-10-07): Free 프로젝트 `trade-calculater`를 서울 리전에 생성했고, 데이터베이스 변경 2건과 `market-data` 서버 함수를 실제 적용했습니다. `js/backendConfig.js`에는 공개 URL과 publishable key를 입력했습니다. 실제 데이터베이스 권한·계정 분리·충돌 방지·자료 이전과 익명 HTTP 접근 차단 검증을 통과했습니다. 공개 회원가입 제한, 이용자 계정 생성, 사이트 주소와 새 시세 비밀키 등록은 관리 화면 입력을 기다리고 있으며 운영 브랜치에는 아직 반영하지 않았습니다.
+
+프로젝트: [Supabase 관리 화면](https://supabase.com/dashboard/project/pyerygphflowylaqtpht). API URL: `https://pyerygphflowylaqtpht.supabase.co`. 실제 적용 결과와 남은 항목은 [서버 적용 보고](Supabase-deployment-2026-10-07.md)에 정리했습니다.
 
 ## 실제 적용 순서
 
@@ -14,7 +16,7 @@
 
 ## 공식 관리 프로그램으로 연결하는 경우
 
-2026-10-07에 Supabase 관리 연결을 확인했습니다. 계정에는 Free 조직 `ssb4107-cyber's Org`가 있고 생성된 프로젝트는 없습니다. 새 프로젝트 비용은 월 0원으로 조회됐으며, 생성할 조직 선택은 사용자 답변을 기다리고 있습니다. 데이터베이스와 Edge Function은 연결된 관리 기능으로 적용할 수 있습니다. 이 확인만으로 프로젝트가 생성되거나 서버가 적용되는 것은 아닙니다.
+2026-10-07에 Supabase 관리 연결을 확인하고, 사용자가 선택한 Free 조직 `ssb4107-cyber's Org`에 프로젝트를 생성했습니다. 새 프로젝트 비용은 월 0원으로 확인했습니다. 데이터베이스와 Edge Function은 연결된 관리 기능으로 적용했습니다. 현재 연결된 기능에는 Auth 계정 생성·설정 변경과 Edge Function 비밀키 등록 기능이 없으므로 해당 항목은 관리 화면에서 입력해야 합니다.
 
 CLI를 직접 사용하는 경우 플러그인의 계정 인증은 Supabase CLI에 자동으로 전달되지 않습니다. 공식 CLI 2.119.0을 별도의 로컬 도구 폴더에 설치했으며 다음 절차는 CLI를 통한 별도 관리가 필요한 경우에 사용합니다.
 
@@ -62,8 +64,11 @@ node tests/portfolio.browser.cjs
 node tests/p2.browser.cjs
 node tests/server.browser.cjs
 node tests/server.sql.cjs
+node tests/server.public.cjs
 ```
 
-브라우저 검증에는 Playwright와 Edge가 필요합니다. PostgreSQL 검증에는 임시 검증 환경의 `@electric-sql/pglite`가 필요합니다. `server.browser.cjs`는 공식 Supabase SDK와 통제된 Auth/PostgREST 응답을 사용하며, 실제 Supabase 계정/프로젝트 검증을 대신하지 않습니다. `server.sql.cjs`는 실제 PostgreSQL 엔진에서 마이그레이션과 RLS 권한을 실행합니다.
+브라우저 검증에는 Playwright와 Edge가 필요합니다. PostgreSQL 검증에는 임시 검증 환경의 `@electric-sql/pglite`가 필요합니다. `server.browser.cjs`는 공식 Supabase SDK와 통제된 Auth/PostgREST 응답을 사용하며, 실제 Supabase 계정/프로젝트 검증을 대신하지 않습니다. `server.sql.cjs`는 실제 PostgreSQL 엔진에서 마이그레이션과 RLS 권한을 실행합니다. `server.public.cjs`는 실제 배포된 서버의 익명 접근 차단과 로그인 설정 상태만 확인하며, 계정을 만들거나 이메일을 발송하지 않습니다.
+
+`supabase/checks/server-isolation.sql`은 실제 서버에서도 실행했습니다. 검사에 필요한 임시 Auth 식별자와 문서는 하나의 트랜잭션 안에서만 생성하고 전체를 롤백합니다. 두 계정의 데이터베이스 권한과 저장 함수는 검증하지만 실제 비밀번호 로그인이나 다른 컴퓨터의 브라우저 세션 검증을 대신하지 않습니다.
 
 참고: [Supabase 비밀번호 로그인](https://supabase.com/docs/reference/javascript/auth-signinwithpassword), [사용자별 데이터 권한](https://supabase.com/docs/guides/database/postgres/row-level-security), [함수 인증](https://supabase.com/docs/guides/functions/auth), [서버 비밀 값](https://supabase.com/docs/guides/functions/secrets).

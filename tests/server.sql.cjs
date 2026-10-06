@@ -18,6 +18,7 @@ const { PGlite } = require("@electric-sql/pglite");
         await db.exec(fs.readFileSync(path.join(migrations, file), "utf8"));
     }
     await db.exec(fs.readFileSync(path.join(__dirname, "../supabase/checks/server-storage.sql"), "utf8"));
+    await db.exec(fs.readFileSync(path.join(__dirname, "../supabase/checks/server-isolation.sql"), "utf8"));
     const asUser = async id => {
         await db.exec("reset role; set role authenticated;");
         await db.query("select set_config('request.jwt.claim.sub', $1, false)", [id]);
