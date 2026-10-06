@@ -1,0 +1,8 @@
+# Supabase generates project links and temporary state locally.
+supabase/.temp/
+supabase/.branches/
+
+# Private deployment values stay outside the repository.
+.env
+.env.*
+!.env.example

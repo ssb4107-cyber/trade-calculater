@@ -12,6 +12,31 @@
 6. 프로젝트의 공개 URL과 **publishable key**만 `js/backendConfig.js`에 입력합니다. secret key 또는 service_role key는 사용하지 않습니다.
 7. 실제 프로젝트에서 두 계정 간 접근 차단, 같은 계정의 서로 다른 컴퓨터 저장, 로그아웃/계정 전환, 시세 요청, 자료 이전을 검증한 뒤 GitHub Pages 운영 브랜치에 반영합니다.
 
+## 공식 관리 프로그램으로 연결하는 경우
+
+플러그인의 계정 인증은 Supabase CLI에 자동으로 전달되지 않습니다. 2026-10-06에는 플러그인 관리 기능과 브라우저 조작 기능을 사용할 수 없어 공식 CLI 2.119.0을 별도의 로컬 도구 폴더에 설치했습니다. CLI 계정 인증은 아직 완료하지 않았으며, 이 설치만으로 프로젝트가 생성되거나 서버가 적용되는 것은 아닙니다.
+
+Codex 터미널에서 다음 명령을 실행하고 새로 열린 브라우저에서 인증합니다. 브라우저에 표시되는 확인 코드는 같은 터미널에만 입력합니다. 비밀번호, 확인 코드와 access token은 채팅으로 전달하지 않습니다.
+
+```powershell
+npx --yes supabase@2.119.0 login --name trade-calculater --agent no
+```
+
+인증 후 조직과 기존 프로젝트를 조회하여 **Free 조직과 무료 프로젝트 여유가 확인된 경우에만** 새 프로젝트를 생성합니다. 서울 리전 `ap-northeast-2`를 사용하며 유료 크기, 고가용성 옵션 또는 요금제 변경은 적용하지 않습니다.
+
+생성한 프로젝트를 연결한 다음 다음 순서로 적용합니다. `<project-ref>`는 실제 생성 결과로 바꿉니다. 데이터베이스 비밀번호는 공식 프로그램의 입력 창이나 안전한 로컬 인증 저장소로만 전달합니다.
+
+```powershell
+supabase db push --dry-run
+supabase db push
+supabase config diff --project-ref <project-ref>
+supabase config push --project-ref <project-ref>
+supabase functions deploy market-data --project-ref <project-ref> --use-api
+supabase db query --project-ref <project-ref> --file supabase/checks/server-storage.sql
+```
+
+`config.toml`에는 사이트 주소, 공개 회원가입/익명 로그인 제한, 시세 함수의 인증 방식만 선언합니다. `config diff` 결과를 확인한 뒤 적용합니다. 저장 권한 점검 SQL은 사용자 자료를 읽거나 변경하지 않습니다. 실제 두 계정 로그인·저장·시세 확인은 별도로 수행해야 합니다.
+
 ## 사용 방식
 
 - 이메일과 비밀번호로 로그인합니다. 로그인 상태는 브라우저에 유지되며, 종목·거래·계산 기록·정렬과 화면 설정의 원본은 서버에 저장합니다.

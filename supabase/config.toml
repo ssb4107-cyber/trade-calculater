@@ -1,3 +1,13 @@
+project_id = "trade-calculater"
+
+[auth]
+site_url = "https://ssb4107-cyber.github.io/trade-calculater/"
+enable_signup = false
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = false
+
 [functions.market-data]
 # Auth JWT is verified explicitly by auth.getUser(); supports publishable API keys.
 verify_jwt = false
