@@ -45,7 +45,7 @@ menus.forEach(menu => {
 sidebarToggle.addEventListener("click", () => {
     const settings = SilverSettings.load();
 
-    SilverSettings.update({
+    SilverSettings.tryUpdate({
         sidebarCollapsed: !settings.sidebarCollapsed
     });
 

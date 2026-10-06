@@ -20,75 +20,113 @@ const PortfolioStorage = (() => {
         return JSON.parse(JSON.stringify(value));
     }
 
-    function normalizeTrade(trade, index) {
+    function text(value, fallback, damaged) {
+        if (value === undefined || value === null) return fallback;
+        if (typeof value === "string") return value;
+        damaged();
+        return fallback;
+    }
+
+    function number(value, fallback, damaged) {
+        if (value === undefined || value === null) return fallback;
+        if (SafeStorage.isNumeric(value)) return Number(value);
+        damaged();
+        return fallback;
+    }
+
+    function validAmounts(item, fields) {
+        return fields.every(key => !(key in item)
+            || (SafeStorage.isNumeric(item[key]) && Number(item[key]) >= 0));
+    }
+
+    function normalizeTrade(trade, index, damaged) {
+        if (!SafeStorage.isRecord(trade) || !validAmounts(trade, ["price", "qty"])) {
+            damaged();
+            return null;
+        }
         return {
-            id: Number(trade.id) || -(index + 1),
-            type: trade.type || "SELL",
+            id: number(trade.id, -(index + 1), damaged) || -(index + 1),
+            type: text(trade.type, "SELL", damaged),
             price: Number(trade.price) || 0,
             qty: Number(trade.qty) || 0,
-            date: trade.date || new Date().toISOString(),
-            realizedPnL: Number(trade.realizedPnL) || 0
+            date: text(trade.date, "", damaged),
+            realizedPnL: number(trade.realizedPnL, 0, damaged)
         };
     }
 
-    function normalizePosition(position, index) {
+    function normalizePosition(position, index, damaged) {
+        if (!SafeStorage.isRecord(position) || !validAmounts(position, ["buyPrice", "buyQty"])) {
+            damaged();
+            return null;
+        }
+        if (position.trades !== undefined && !Array.isArray(position.trades)) {
+            damaged();
+            return null;
+        }
         const buyQty = Number(position.buyQty) || 0;
         const trades = Array.isArray(position.trades)
-            ? position.trades.map(normalizeTrade)
+            ? position.trades.map((trade, tradeIndex) => normalizeTrade(trade, tradeIndex, damaged))
             : [];
+        // A broken sale makes the remaining quantity unknowable. Keep its raw position in the backup.
+        if (trades.includes(null)) return null;
+        if (position.tags !== undefined && !Array.isArray(position.tags)) damaged();
+        const tags = (Array.isArray(position.tags) ? position.tags : []).filter(tag => {
+            if (typeof tag === "string") return true;
+            damaged();
+            return false;
+        });
 
         return {
-            id: Number(position.id) || -(index + 1),
-            number: Number(position.number) || index + 1,
-            type: position.type || "TRADING",
+            id: number(position.id, -(index + 1), damaged) || -(index + 1),
+            number: number(position.number, index + 1, damaged) || index + 1,
+            type: text(position.type, "TRADING", damaged),
             buyPrice: Number(position.buyPrice) || 0,
             buyQty,
-            remainQty: Number(position.remainQty ?? buyQty) || 0,
-            buyDate: position.buyDate || "",
-            memo: position.memo || "",
-            status: position.status || "OPEN",
-            tags: Array.isArray(position.tags) ? position.tags : [],
-            realizedPnL: Number(position.realizedPnL) || 0,
+            remainQty: number(position.remainQty, buyQty, damaged),
+            buyDate: text(position.buyDate, "", damaged),
+            memo: text(position.memo, "", damaged),
+            status: text(position.status, "OPEN", damaged),
+            tags,
+            realizedPnL: number(position.realizedPnL, 0, damaged),
             trades
         };
     }
 
-    function normalizeStock(stock, index) {
-        const symbol = (stock.symbol || "").toUpperCase();
-        const displayName = stock.displayName || stock.name || symbol || "새 종목";
-        const connected = stock.connected ?? Boolean(symbol);
+    function normalizeStock(stock, index, damaged) {
+        if (!SafeStorage.isRecord(stock)) { damaged(); return null; }
+        const symbol = text(stock.symbol, "", damaged).toUpperCase();
+        const name = text(stock.name, symbol, damaged);
+        const displayName = text(stock.displayName, name || symbol || "새 종목", damaged);
+        if (stock.connected !== undefined && typeof stock.connected !== "boolean") damaged();
+        const connected = typeof stock.connected === "boolean" ? stock.connected : Boolean(symbol);
+        if (stock.positions !== undefined && !Array.isArray(stock.positions)) damaged();
 
         return {
-            id: stock.id || `stock-${symbol || "manual"}-${index}`,
+            id: text(stock.id, `stock-${symbol || "manual"}-${index}`, damaged),
             displayName,
-            name: stock.name || stock.companyName || symbol || "",
+            name,
             symbol,
-            companyName: stock.companyName || stock.name || symbol || "",
-            exchange: stock.exchange || "",
+            companyName: text(stock.companyName, name, damaged),
+            exchange: text(stock.exchange, "", damaged),
             connected,
-            quoteRevision: Number(stock.quoteRevision) || 0,
-            currentPrice: stock.currentPrice === null
-                ? null
-                : Number(stock.currentPrice) || null,
-            memo: stock.memo || "",
+            quoteRevision: number(stock.quoteRevision, 0, damaged),
+            currentPrice: number(stock.currentPrice, null, damaged),
+            memo: text(stock.memo, "", damaged),
             positions: Array.isArray(stock.positions)
-                ? stock.positions.map(normalizePosition)
+                ? stock.positions.map((position, positionIndex) => normalizePosition(position, positionIndex, damaged)).filter(Boolean)
                 : []
         };
     }
 
+    function read() {
+        return SafeStorage.read(STORAGE_KEY, (saved, damaged) => {
+            if (!Array.isArray(saved)) throw new Error("Invalid portfolio");
+            return saved.map((stock, index) => normalizeStock(stock, index, damaged)).filter(Boolean);
+        }, () => clone(defaultStocks), () => []);
+    }
+
     function loadStocks() {
-        try {
-            const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-
-            if (Array.isArray(saved)) {
-                return saved.map(normalizeStock);
-            }
-        } catch (error) {
-            console.warn("Portfolio data could not be loaded.", error);
-        }
-
-        return clone(defaultStocks);
+        return read().value;
     }
 
     let pendingWrite = Promise.resolve();
@@ -96,11 +134,12 @@ const PortfolioStorage = (() => {
     function updateStocks(update) {
         const commit = () => {
             // Read inside the lock: another tab may have saved since this page loaded.
-            const latest = loadStocks();
+            const state = read();
+            const latest = state.value;
             const changed = update(latest) !== false;
 
             if (changed) {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(latest));
+                SafeStorage.write(STORAGE_KEY, latest, state);
             }
 
             return { stocks: latest, changed };

@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, "..");
 
 function runtime(files, globals = {}) {
     const context = vm.createContext({ console, ...globals });
-    for (const file of files) {
+    for (const file of new Set(["safeStorage.js", ...files])) {
         vm.runInContext(fs.readFileSync(path.join(root, "js", file), "utf8"), context);
     }
     return context;
@@ -139,4 +139,162 @@ test("a failed write does not poison subsequent transactions", async () => {
     localStorage.setItem = originalSet;
     await vm.runInContext("PortfolioStorage.updateStocks(latest => { latest[0].memo = 'saved'; })", context);
     assert.equal(JSON.parse(localStorage.getItem("portfolioStocks"))[0].memo, "saved");
+});
+
+test("F09 isolates damaged items and preserves the exact original before saving", async () => {
+    const localStorage = storage();
+    const original = JSON.stringify([stock(null, false, [holding(), null]), null]);
+    localStorage.setItem("portfolioStocks", original);
+    const context = runtime(["storage.js"], { localStorage });
+    assert.equal(vm.runInContext("PortfolioStorage.loadStocks().length", context), 1);
+    assert.equal(vm.runInContext("PortfolioStorage.loadStocks()[0].positions.length", context), 1);
+    assert.equal(localStorage.getItem("portfolioStocks"), original);
+    await vm.runInContext("PortfolioStorage.updateStocks(latest => { latest[0].memo = 'recovered'; })", context);
+    assert.equal(JSON.parse(localStorage.getItem("portfolioStocks.recoveryBackup")).raw, original);
+    assert.equal(JSON.parse(localStorage.getItem("portfolioStocks"))[0].memo, "recovered");
+});
+
+test("F09 unparseable data is never replaced with an empty/default portfolio", async () => {
+    const localStorage = storage();
+    const original = '[{"id":"A"';
+    localStorage.setItem("portfolioStocks", original);
+    const context = runtime(["storage.js"], { localStorage });
+    assert.equal(vm.runInContext("PortfolioStorage.loadStocks().length", context), 0);
+    await assert.rejects(vm.runInContext("PortfolioStorage.updateStocks(latest => latest.push({id: 'new'}))", context),
+        error => error.name === "StorageRecoveryRequired");
+    assert.equal(localStorage.getItem("portfolioStocks"), original);
+    assert.equal(JSON.parse(localStorage.getItem("portfolioStocks.recoveryBackup")).raw, original);
+});
+
+test("F09 a failed recovery backup cannot overwrite the damaged original", async () => {
+    const localStorage = storage();
+    const original = JSON.stringify([stock(null, false), null]);
+    localStorage.setItem("portfolioStocks", original);
+    const set = localStorage.setItem;
+    localStorage.setItem = (key, value) => {
+        if (key.includes("recoveryBackup")) throw new Error("quota");
+        set(key, value);
+    };
+    const context = runtime(["storage.js"], { localStorage });
+    await assert.rejects(vm.runInContext("PortfolioStorage.updateStocks(latest => { latest[0].memo = 'new'; })", context), /quota/);
+    assert.equal(localStorage.getItem("portfolioStocks"), original);
+});
+
+function settingsGlobals(localStorage) {
+    return { localStorage, window: { dispatchEvent() {} }, CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } } };
+}
+
+test("F09 wrong settings types fall back while valid settings and raw backup survive", () => {
+    const localStorage = storage();
+    const original = JSON.stringify({ stockOrder: {}, pinnedSymbols: ["A", null], recentSymbols: 1,
+        apiRefreshIntervalMinutes: true, darkMode: true, priceCacheBySymbol: { A: null } });
+    localStorage.setItem("silverStrategySettings", original);
+    const context = runtime(["settingsStore.js"], settingsGlobals(localStorage));
+    const loaded = vm.runInContext("SilverSettings.load()", context);
+    assert.deepEqual(Array.from(loaded.stockOrder), []);
+    assert.deepEqual(Array.from(loaded.pinnedSymbols), ["A"]);
+    assert.equal(loaded.darkMode, true);
+    assert.equal(loaded.apiRefreshIntervalMinutes, 5);
+    vm.runInContext("SilverSettings.update({ apiRefreshIntervalMinutes: 10 })", context);
+    assert.equal(JSON.parse(localStorage.getItem("silverStrategySettings.recoveryBackup")).raw, original);
+    assert.equal(vm.runInContext("SilverSettings.load().apiRefreshIntervalMinutes", context), 10);
+});
+
+test("F10 failed settings saves retain saved state and emit no success event", () => {
+    const localStorage = storage();
+    localStorage.setItem("silverStrategySettings", JSON.stringify({ darkMode: false }));
+    let events = 0;
+    const globals = settingsGlobals(localStorage);
+    globals.window.dispatchEvent = () => events += 1;
+    const context = runtime(["settingsStore.js"], globals);
+    localStorage.setItem = () => { throw new Error("quota"); };
+    assert.equal(vm.runInContext("SilverSettings.tryUpdate({ darkMode: true })", context), null);
+    assert.equal(vm.runInContext("SilverSettings.load().darkMode", context), false);
+    assert.equal(events, 0);
+});
+
+function fakeTimers() {
+    let clock = 0;
+    let id = 0;
+    const jobs = new Map();
+    return {
+        setTimeout(callback, delay) { const key = ++id; jobs.set(key, { callback, time: clock + delay }); return key; },
+        clearTimeout(key) { jobs.delete(key); },
+        async tick(delay) {
+            const target = clock + delay;
+            while (true) {
+                const next = [...jobs].filter(([, job]) => job.time <= target).sort((a, b) => a[1].time - b[1].time)[0];
+                if (!next) break;
+                clock = next[1].time;
+                jobs.delete(next[0]);
+                next[1].callback();
+                for (let index = 0; index < 12; index += 1) await Promise.resolve();
+            }
+            clock = target;
+        }
+    };
+}
+
+test("F10 a quote cache write failure keeps the persisted cache and valid API result", async () => {
+    const localStorage = storage();
+    localStorage.setItem("silverStrategySettings", JSON.stringify({ finnhubApiKey: "TEST",
+        priceCacheBySymbol: { A: { price: 20, cachedAt: 0, updatedAt: "2026-10-06T00:00:00Z" } } }));
+    const context = runtime(["settingsStore.js", "priceProvider.js"], { ...settingsGlobals(localStorage),
+        SilverAppConfig: { DEFAULT_FINNHUB_API_KEY: "" }, AbortController, setTimeout, clearTimeout,
+        fetch: async () => ({ ok: true, json: async () => ({ c: 25 }) }) });
+    localStorage.setItem = () => { throw new Error("quota"); };
+    const result = await vm.runInContext("PriceProvider.getCurrentPrice('A', {force: true})", context);
+    assert.equal(result.ok, true);
+    assert.equal(result.price, 25);
+    assert.equal(result.cacheSaved, false);
+    assert.equal(vm.runInContext("PriceProvider.getCachedPrice('A').price", context), 20);
+});
+
+test("F18 timeout covers stalled fetch and response body", async () => {
+    for (const bodyStalls of [false, true]) {
+        const localStorage = storage();
+        localStorage.setItem("silverStrategySettings", JSON.stringify({ finnhubApiKey: "TEST" }));
+        const timers = fakeTimers();
+        let signal;
+        const context = runtime(["settingsStore.js", "priceProvider.js"], { ...settingsGlobals(localStorage),
+            SilverAppConfig: { DEFAULT_FINNHUB_API_KEY: "" }, AbortController,
+            setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+            fetch: (_url, options) => { signal = options.signal; return bodyStalls
+                ? Promise.resolve({ ok: true, json: () => new Promise(() => {}) }) : new Promise(() => {}); } });
+        const pending = vm.runInContext("PriceProvider.getCurrentPrice('A', {force: true})", context);
+        await timers.tick(15000);
+        const result = await pending;
+        assert.equal(result.ok, false);
+        assert.equal(result.price, null);
+        assert.equal(signal.aborted, true);
+    }
+});
+
+test("F18 after a timeout the next scheduled refresh succeeds", async () => {
+    const localStorage = storage();
+    localStorage.setItem("silverStrategySettings", JSON.stringify({ finnhubApiKey: "TEST" }));
+    const timers = fakeTimers();
+    let calls = 0;
+    const context = runtime(["settingsStore.js", "priceProvider.js", "refreshManager.js"], { ...settingsGlobals(localStorage),
+        SilverAppConfig: { DEFAULT_FINNHUB_API_KEY: "" }, AbortController,
+        setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+        fetch: () => ++calls === 1 ? new Promise(() => {}) : Promise.resolve({ ok: true, json: async () => ({ c: 30 }) }) });
+    vm.runInContext("RefreshManager.start({refresh: () => PriceProvider.getCurrentPrice('A', {force:true}), getIntervalMs: () => 60000})", context);
+    await timers.tick(15000);
+    await timers.tick(45000);
+    assert.equal(calls, 2);
+    assert.equal(vm.runInContext("PriceProvider.getCachedPrice('A').price", context), 30);
+});
+
+test("F11 a disabled initial selection still has an active scheduler", async () => {
+    const timers = fakeTimers();
+    let enabled = false;
+    let calls = 0;
+    const context = runtime(["refreshManager.js"], { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+        isEnabled: () => enabled, refresh: async () => calls += 1 });
+    vm.runInContext("RefreshManager.start({refresh, isEnabled, getIntervalMs: () => 60000})", context);
+    assert.equal(calls, 0);
+    enabled = true;
+    await timers.tick(60000);
+    assert.equal(calls, 1);
 });

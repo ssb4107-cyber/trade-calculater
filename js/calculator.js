@@ -147,28 +147,49 @@ const Calculator = (() => {
         };
     }
 
-    function loadHistory() {
-        try {
-            const history = JSON.parse(localStorage.getItem(HISTORY_KEY));
+    function readHistory() {
+        return SafeStorage.read(HISTORY_KEY, (history, damaged) => {
+            if (!Array.isArray(history)) throw new Error("Invalid history");
+            return history.filter(record => {
+                const valid = SafeStorage.isRecord(record) && SafeStorage.isNumeric(record.id)
+                    && SafeStorage.isNumeric(record.price) && Number(record.price) > 0
+                    && SafeStorage.isNumeric(record.pct) && Number(record.pct) > 0;
+                if (!valid) damaged();
+                return valid;
+            });
+        }, () => []);
+    }
 
-            return Array.isArray(history) ? history : [];
-        } catch (error) {
-            console.warn("계산 기록을 불러오지 못했습니다.", error);
-            return [];
-        }
+    function loadHistory() {
+        return readHistory().value;
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>"']/g, character => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+        })[character]);
     }
 
     function saveHistory(history) {
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-        UIFeedback.showToast();
+        try {
+            SafeStorage.write(HISTORY_KEY, history, readHistory());
+            UIFeedback.showToast();
+            return true;
+        } catch (error) {
+            SafeStorage.notify(error.name === "StorageRecoveryRequired"
+                ? "손상된 계산 기록 원본을 보호하고 있습니다. 복구 후 다시 저장해 주세요."
+                : "계산 기록을 저장하지 못했습니다. 기존 기록을 유지합니다.");
+            return false;
+        }
     }
 
     function addHistory(record) {
         const history = loadHistory();
 
         history.unshift(record);
-        saveHistory(history.slice(0, 8));
+        if (!saveHistory(history.slice(0, 8))) return false;
         renderHistory();
+        return true;
     }
 
     function renderTargets() {
@@ -209,7 +230,7 @@ const Calculator = (() => {
 
         const targets = calculateTargets(price, percent);
 
-        addHistory({
+        const saved = addHistory({
             id: Date.now(),
             time: new Date().toLocaleTimeString("ko-KR", {
                 hour12: false,
@@ -222,6 +243,7 @@ const Calculator = (() => {
             sell: formatPrice(targets.sell),
             currency: state.currency
         });
+        if (!saved) return;
 
         dom.basePrice.focus();
         dom.basePrice.select();
@@ -247,13 +269,13 @@ const Calculator = (() => {
 
             return `
                 <tr>
-                    <td>${record.time || "-"}</td>
+                    <td>${escapeHtml(record.time || "-")}</td>
                     <td>${symbol}${formatPrice(record.price, currency)}</td>
-                    <td>${record.pct}%</td>
-                    <td class="buy-text">${formatHistoryAmount(record.buy, currency)}</td>
-                    <td class="sell-text">${formatHistoryAmount(record.sell, currency)}</td>
+                    <td>${escapeHtml(record.pct)}%</td>
+                    <td class="buy-text">${escapeHtml(formatHistoryAmount(record.buy, currency))}</td>
+                    <td class="sell-text">${escapeHtml(formatHistoryAmount(record.sell, currency))}</td>
                     <td>
-                        <button class="danger-link" type="button" data-delete-id="${record.id}">
+                        <button class="danger-link" type="button" data-delete-id="${Number(record.id)}">
                             삭제
                         </button>
                     </td>
@@ -265,14 +287,14 @@ const Calculator = (() => {
     function deleteHistory(id) {
         const history = loadHistory().filter(record => record.id !== id);
 
-        saveHistory(history);
+        if (!saveHistory(history)) return;
         renderHistory();
     }
 
     function clearHistory() {
         if (!confirm("최근 기록을 모두 삭제하시겠습니까?")) return;
 
-        localStorage.removeItem(HISTORY_KEY);
+        if (!saveHistory([])) return;
         renderHistory();
     }
 
@@ -314,7 +336,16 @@ const Calculator = (() => {
         }
 
         const signedPercent = changePercent * state.changeSign;
-        const basePrice = currentPrice / (1 + signedPercent / 100);
+        const denominator = 1 + signedPercent / 100;
+        if (denominator <= 0) {
+            alert("하락률은 100% 미만으로 입력해 주세요.");
+            return;
+        }
+        const basePrice = currentPrice / denominator;
+        if (!Number.isFinite(basePrice) || basePrice <= 0) {
+            alert("유효한 가격을 계산할 수 없습니다. 입력값을 확인해 주세요.");
+            return;
+        }
 
         dom.basePrice.value = state.currency === "USD"
             ? basePrice.toFixed(2)

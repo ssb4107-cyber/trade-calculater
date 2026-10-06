@@ -14,10 +14,14 @@ function loadSettingsForm() {
 }
 
 function saveSettingsForm() {
-    SilverSettings.update({
+    const saved = SilverSettings.tryUpdate({
         darkMode: settingsDom.darkModeToggle.checked,
         apiRefreshIntervalMinutes: Number(settingsDom.apiRefreshInterval.value) || 5
     });
+    if (!saved) {
+        settingsDom.settingsSavedText.textContent = "저장하지 못했습니다. 다시 시도해 주세요.";
+        return;
+    }
 
     SilverSettings.applyTheme(document);
     settingsDom.settingsSavedText.textContent = "저장되었습니다.";

@@ -10,6 +10,10 @@ let pendingQuoteConnection = null;
 let connectionSearchDebounceTimer = null;
 const quoteRequests = new Map();
 let pendingQuoteCount = 0;
+let priceRefreshTarget = null;
+let priceRefreshInterval = null;
+let stockSearchGeneration = 0;
+let quoteSearchGeneration = 0;
 
 let stocks = PortfolioStorage.loadStocks();
 
@@ -108,7 +112,11 @@ async function persistStockChange(update, options = {}) {
         return result.changed;
     } catch (error) {
         console.warn("Portfolio data could not be saved.", error);
-        alert("저장하지 못했습니다. 브라우저 저장 공간을 확인하고 다시 시도해 주세요.");
+        const message = error.name === "StorageRecoveryRequired"
+            ? "손상된 저장 자료의 원본을 보호하고 있습니다. 자료 복구 후 다시 저장해 주세요."
+            : "저장하지 못했습니다. 브라우저 저장 공간을 확인하고 다시 시도해 주세요.";
+        if (options.silent) SafeStorage.notify(message);
+        else alert(message);
         return false;
     } finally {
         if (button) button.disabled = false;
@@ -185,7 +193,7 @@ function getApiFailureCount(symbol) {
 function setApiFailureCount(symbol, count) {
     const settings = SilverSettings.load();
 
-    SilverSettings.update({
+    SilverSettings.tryUpdate({
         apiFailureCountBySymbol: {
             ...(settings.apiFailureCountBySymbol || {}),
             [symbol]: count
@@ -406,7 +414,7 @@ function rememberRecentStock(stock) {
         ...(settings.recentSymbols || []).filter(item => item !== key && item !== stock.symbol)
     ].slice(0, 20);
 
-    SilverSettings.update({ recentSymbols });
+    SilverSettings.tryUpdate({ recentSymbols });
 }
 
 function togglePinnedStock(stock) {
@@ -418,7 +426,7 @@ function togglePinnedStock(stock) {
         ? pinnedSymbols.filter(item => item !== key && item !== stock.symbol)
         : [...pinnedSymbols, key];
 
-    SilverSettings.update({ pinnedSymbols: nextPinned });
+    SilverSettings.tryUpdate({ pinnedSymbols: nextPinned });
     renderStocks();
 }
 
@@ -439,7 +447,7 @@ function saveStockOrderFromDom() {
         ...(settings.manuallyOrderedStocks ?? settings.stockOrder ?? []),
         draggedSymbol
     ])];
-    SilverSettings.update({ stockOrder, manuallyOrderedStocks });
+    SilverSettings.tryUpdate({ stockOrder, manuallyOrderedStocks });
 }
 
 function renderStocks() {
@@ -519,7 +527,7 @@ function renderTradeList(position) {
     return position.trades.map(trade => `
         <div class="trade-item">
             <div>
-                <strong>${new Date(trade.date).toLocaleDateString("ko-KR")}</strong>
+                <strong>${Number.isFinite(Date.parse(trade.date)) ? new Date(trade.date).toLocaleDateString("ko-KR") : "-"}</strong>
                 <span>매도가 ${formatMoney(trade.price)}</span>
                 <span>수량 ${formatQty(trade.qty)}주</span>
                 <span>실현손익 ${formatMoney(trade.realizedPnL)}</span>
@@ -593,7 +601,7 @@ function renderPositionCard(position) {
                 <div class="position-more-body">
                     <div class="info-item">
                         <span class="info-label">매수일</span>
-                        <span class="info-value">${position.buyDate || "-"}</span>
+                        <span class="info-value">${escapeHtml(position.buyDate || "-")}</span>
                     </div>
                     <div class="info-item">
                         <span class="info-label">총 손익</span>
@@ -749,6 +757,7 @@ function refreshUI() {
     renderStockDetail();
     renderPositions();
     renderDashboard();
+    schedulePriceRefresh();
 }
 
 async function updateCurrentPrice(options = {}) {
@@ -810,6 +819,14 @@ async function updateCurrentPrice(options = {}) {
 }
 
 function schedulePriceRefresh() {
+    const stock = getStock();
+    const settings = SilverSettings.load();
+    const target = [getStockKey(stock), stock?.symbol, stock?.connected, stock?.quoteRevision,
+        PriceProvider.getEffectiveApiKey()].join("|");
+    const interval = settings.apiRefreshIntervalMinutes;
+    if (target === priceRefreshTarget && interval === priceRefreshInterval) return;
+    priceRefreshTarget = target;
+    priceRefreshInterval = interval;
     RefreshManager.start({
         refresh: () => updateCurrentPrice({ silent: true }),
         getIntervalMs: () => {
@@ -822,10 +839,15 @@ function schedulePriceRefresh() {
     });
 }
 
+function getLocalDate() {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+}
+
 function openAddPositionModal() {
     resetPositionForm();
     editingPositionStockId = getStockKey(getStock());
-    dom.buyDate.value = new Date().toISOString().slice(0, 10);
+    dom.buyDate.value = getLocalDate();
     openModal(dom.positionModal);
     dom.buyPrice.focus();
 }
@@ -849,7 +871,7 @@ function openClonePositionModal(position) {
     dom.positionModalTitle.textContent = "포지션 복제";
     dom.buyPrice.value = formatEditableNumber(position.buyPrice);
     dom.buyQty.value = formatEditableNumber(position.buyQty);
-    dom.buyDate.value = new Date().toISOString().slice(0, 10);
+    dom.buyDate.value = getLocalDate();
     dom.buyMemo.value = position.memo;
 
     openModal(dom.positionModal);
@@ -942,9 +964,12 @@ async function deletePosition(positionId) {
 
 function showStockContextMenu(stockId, x, y) {
     contextMenuStockId = stockId;
-    dom.stockContextMenu.style.left = `${x}px`;
-    dom.stockContextMenu.style.top = `${y}px`;
     dom.stockContextMenu.hidden = false;
+    const bounds = dom.stockContextMenu.getBoundingClientRect();
+    const left = Math.max(8, Math.min(x, document.documentElement.clientWidth - bounds.width - 8));
+    const top = Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8));
+    dom.stockContextMenu.style.left = `${left}px`;
+    dom.stockContextMenu.style.top = `${top}px`;
 }
 
 function hideStockContextMenu() {
@@ -1051,6 +1076,7 @@ async function saveStockSettings() {
 
 function openQuoteConnectionModal() {
     if (!getStockById(settingsStockId)) return;
+    quoteSearchGeneration += 1;
 
     dom.quoteSearchInput.value = "";
     dom.quoteSearchResults.innerHTML = "";
@@ -1059,6 +1085,7 @@ function openQuoteConnectionModal() {
 }
 
 function closeQuoteConnectionModal() {
+    quoteSearchGeneration += 1;
     if (connectionSearchDebounceTimer) {
         clearTimeout(connectionSearchDebounceTimer);
         connectionSearchDebounceTimer = null;
@@ -1069,6 +1096,8 @@ function closeQuoteConnectionModal() {
 
 async function searchQuoteConnections() {
     const query = dom.quoteSearchInput.value.trim();
+    const request = ++quoteSearchGeneration;
+    const stockId = settingsStockId;
 
     if (!query) {
         dom.quoteSearchResults.innerHTML = "";
@@ -1078,6 +1107,8 @@ async function searchQuoteConnections() {
     dom.quoteSearchResults.innerHTML = `<div class="empty-state small">검색 중입니다.</div>`;
 
     const results = await PriceProvider.searchStocks(query);
+    if (request !== quoteSearchGeneration || dom.quoteSearchInput.value.trim() !== query
+        || settingsStockId !== stockId || dom.quoteConnectionModal.getAttribute("aria-hidden") !== "false") return;
 
     if (results.length === 0) {
         dom.quoteSearchResults.innerHTML = `
@@ -1219,6 +1250,7 @@ async function deleteTrade(positionId, tradeId) {
 }
 
 function showStockForm() {
+    stockSearchGeneration += 1;
     openModal(dom.stockForm);
     dom.stockName.value = "";
     if (dom.stockSymbol) dom.stockSymbol.value = "";
@@ -1230,6 +1262,7 @@ function showStockForm() {
 }
 
 function hideStockForm() {
+    stockSearchGeneration += 1;
     if (searchDebounceTimer) {
         clearTimeout(searchDebounceTimer);
         searchDebounceTimer = null;
@@ -1290,6 +1323,7 @@ function saveStock() {
 
 async function searchStocks() {
     const query = dom.stockSearchInput.value.trim();
+    const request = ++stockSearchGeneration;
 
     if (!query) {
         dom.stockSearchResults.innerHTML = "";
@@ -1299,6 +1333,8 @@ async function searchStocks() {
     dom.stockSearchResults.innerHTML = `<div class="empty-state small">검색 중입니다.</div>`;
 
     const results = await PriceProvider.searchStocks(query);
+    if (request !== stockSearchGeneration || dom.stockSearchInput.value.trim() !== query
+        || dom.stockForm.getAttribute("aria-hidden") !== "false") return;
 
     if (results.length === 0) {
         dom.stockSearchResults.innerHTML = `
@@ -1324,7 +1360,18 @@ async function searchStocks() {
 }
 
 function bindEvents() {
+    window.addEventListener("silver-settings-changed", schedulePriceRefresh);
+    window.addEventListener("resize", hideStockContextMenu);
+    document.addEventListener("scroll", event => {
+        if (!event.target.closest?.(".context-menu")) hideStockContextMenu();
+    }, true);
     window.addEventListener("storage", event => {
+        if (event.key === "silverStrategySettings") {
+            SilverSettings.applyTheme(document);
+            renderStocks();
+            schedulePriceRefresh();
+            return;
+        }
         if (event.key !== "portfolioStocks" && event.key !== null) return;
         syncStocks(PortfolioStorage.loadStocks());
         refreshUI();
@@ -1485,6 +1532,7 @@ function bindEvents() {
     dom.stockFilterInput.addEventListener("input", renderStocks);
     dom.searchStockBtn.addEventListener("click", searchStocks);
     dom.stockSearchInput.addEventListener("input", () => {
+        stockSearchGeneration += 1;
         clearTimeout(searchDebounceTimer);
         searchDebounceTimer = setTimeout(searchStocks, 400);
     });
@@ -1503,6 +1551,7 @@ function bindEvents() {
     dom.searchQuoteBtn.addEventListener("click", searchQuoteConnections);
     dom.cancelQuoteConnectionBtn.addEventListener("click", closeQuoteConnectionModal);
     dom.quoteSearchInput.addEventListener("input", () => {
+        quoteSearchGeneration += 1;
         clearTimeout(connectionSearchDebounceTimer);
         connectionSearchDebounceTimer = setTimeout(searchQuoteConnections, 400);
     });
@@ -1566,7 +1615,7 @@ function bindEvents() {
                 closeModal(modal);
             }
 
-            if (event.key === "Enter" && event.target.tagName !== "TEXTAREA") {
+            if (event.key === "Enter" && !event.defaultPrevented && event.target.tagName === "INPUT") {
                 event.preventDefault();
 
                 if (
@@ -1591,4 +1640,3 @@ function bindEvents() {
 
 bindEvents();
 refreshUI();
-schedulePriceRefresh();

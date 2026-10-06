@@ -450,6 +450,256 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         }
     });
 
+    await check("F09 valid stocks survive broken records and settings with an original backup", async () => {
+        const { page } = await scenario([stock("VALID", { positions: [position(1), null] }), null],
+            { stockOrder: { broken: true }, pinnedSymbols: ["VALID"], darkMode: true });
+        assert.equal(await page.locator(".stock-row").count(), 1);
+        assert.equal(await page.locator(".editPositionBtn").count(), 1);
+        const original = await page.evaluate(() => localStorage.getItem("portfolioStocks"));
+        await page.locator(".editPositionBtn").click();
+        await page.locator("#buyMemo").fill("recovered draft");
+        await page.locator("#savePositionBtn").click();
+        await page.locator("#positionModal").waitFor({ state: "hidden" });
+        assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("portfolioStocks.recoveryBackup")).raw), original);
+        await page.locator(".pin-stock-btn").click();
+        assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), true);
+        assert.equal(await page.evaluate(() => Array.isArray(SilverSettings.load().stockOrder)), true);
+        assert(await page.evaluate(() => Boolean(localStorage.getItem("silverStrategySettings.recoveryBackup"))));
+        await page.reload();
+        assert.equal(await page.locator(".stock-row").count(), 1);
+        assert.equal((await saved(page))[0].positions[0].memo, "recovered draft");
+    });
+
+    await check("F09 unparseable portfolio protects the original on a save attempt", async () => {
+        const { page, alerts } = await scenario([stock()]);
+        await page.evaluate(() => localStorage.setItem("portfolioStocks", '[{"id":"broken"'));
+        await page.reload();
+        assert.equal(await page.locator(".stock-row").count(), 0);
+        await page.evaluate(() => addStockFromData({ name: "Cannot overwrite" }));
+        assert.equal(await page.evaluate(() => localStorage.getItem("portfolioStocks")), '[{"id":"broken"');
+        assert(alerts.some(message => message.includes("원본을 보호")));
+    });
+
+    await check("F10 settings failure keeps persisted state, reports failure and permits retry", async () => {
+        const { page } = await scenario([stock()], { darkMode: false });
+        await page.goto(`${base}/pages/settings.html`);
+        await page.evaluate(() => {
+            window.restoreSetItem = Storage.prototype.setItem;
+            Storage.prototype.setItem = function(key, value) {
+                if (key === "silverStrategySettings") throw new DOMException("test quota", "QuotaExceededError");
+                return window.restoreSetItem.call(this, key, value);
+            };
+        });
+        await page.locator("#darkModeToggle").check();
+        await page.locator("#saveSettingsBtn").click();
+        assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), false);
+        assert((await page.locator("#settingsSavedText").textContent()).includes("저장하지 못했습니다"));
+        assert.equal(await page.evaluate(() => document.documentElement.classList.contains("dark-mode")), false);
+        await page.evaluate(() => Storage.prototype.setItem = window.restoreSetItem);
+        await page.locator("#saveSettingsBtn").click();
+        assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), true);
+    });
+
+    await check("F10 calculator save, delete and clear failures preserve visible history", async () => {
+        const { page } = await scenario([stock()]);
+        await page.evaluate(() => localStorage.setItem("stockHistory", JSON.stringify([
+            { id: 1, time: "09:00", price: 10, pct: 1, buy: "9.90", sell: "10.10", currency: "USD" }
+        ])));
+        await page.goto(`${base}/pages/calculator.html`);
+        await page.locator("#autoDecimal").uncheck();
+        await page.locator("#basePrice").fill("25.50");
+        await page.evaluate(() => {
+            const original = Storage.prototype.setItem;
+            Storage.prototype.setItem = function(key, value) {
+                if (key === "stockHistory") throw new DOMException("test quota", "QuotaExceededError");
+                return original.call(this, key, value);
+            };
+        });
+        await page.locator(".table-action").first().click();
+        await page.locator("[data-delete-id]").click();
+        await page.locator("#clearHistoryBtn").click();
+        assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("stockHistory")).length), 1);
+        assert.equal(await page.locator("[data-delete-id]").count(), 1);
+        assert.equal(await page.locator("#basePrice").inputValue(), "25.50");
+        assert((await page.locator("#appToast").textContent()).includes("저장하지 못했습니다"));
+    });
+
+    await check("F11 adding the first connected stock starts immediate and periodic refresh", async () => {
+        const { page } = await scenario([stock()]);
+        await page.clock.install();
+        await page.evaluate(async () => {
+            window.quoteCalls = 0;
+            PriceProvider.getCurrentPrice = async () => ({ ok: true, price: 25 + ++window.quoteCalls });
+            SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
+            await addStockFromData({ name: "Connected", symbol: "NEW" });
+        });
+        await page.waitForFunction(() => getStock().currentPrice === 26);
+        await page.clock.fastForward(6 * 60 * 1000);
+        await page.waitForFunction(() => window.quoteCalls >= 2 && getStock().currentPrice >= 27);
+    });
+
+    await check("F11 quote connection and interval changes take effect without reloading", async () => {
+        const { page } = await scenario([stock()]);
+        await page.clock.install();
+        await page.evaluate(async () => {
+            window.quoteCalls = 0;
+            PriceProvider.getCurrentPrice = async () => ({ ok: true, price: 25 + ++window.quoteCalls });
+            SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
+            openStockSettingsModal(getStock());
+            pendingQuoteConnection = { symbol: "NEW", companyName: "NEW", exchange: "TEST" };
+            await saveStockSettings();
+        });
+        await page.waitForFunction(() => getStock().currentPrice === 26);
+        await page.evaluate(() => SilverSettings.tryUpdate({ apiRefreshIntervalMinutes: 1 }));
+        await page.waitForFunction(() => window.quoteCalls >= 2);
+        const before = await page.evaluate(() => window.quoteCalls);
+        await page.clock.fastForward(61000);
+        await page.waitForFunction(before => window.quoteCalls > before, before);
+    });
+
+    await check("F11 API changes and switching stocks immediately update the selected quote", async () => {
+        const { page } = await scenario([stock("A", { connected: true, symbol: "A" }), stock("B", { connected: true, symbol: "B" })]);
+        await page.evaluate(() => {
+            window.quoteCalls = [];
+            PriceProvider.getCurrentPrice = async symbol => {
+                window.quoteCalls.push(symbol);
+                return { ok: true, price: symbol === "A" ? 11 : 22 };
+            };
+            SilverSettings.tryUpdate({ finnhubApiKey: "TEST-1" });
+        });
+        await page.waitForFunction(() => getStock().currentPrice === 11);
+        await page.locator('.stock-card[data-stock-id="B"]').click();
+        await page.waitForFunction(() => getStock().currentPrice === 22);
+        const before = await page.evaluate(() => window.quoteCalls.length);
+        await page.evaluate(() => SilverSettings.tryUpdate({ finnhubApiKey: "TEST-2" }));
+        await page.waitForFunction(before => window.quoteCalls.length > before, before);
+    });
+
+    for (const connection of [false, true]) {
+        await check(`F13 latest search wins and closed modal responses stay discarded, connection=${connection}`, async () => {
+            const { page } = await scenario([stock()]);
+            const result = await page.evaluate(async connection => {
+                const resolves = {};
+                PriceProvider.searchStocks = query => new Promise(resolve => resolves[query] = resolve);
+                if (connection) { openStockSettingsModal(getStock()); openQuoteConnectionModal(); }
+                else showStockForm();
+                const input = connection ? dom.quoteSearchInput : dom.stockSearchInput;
+                const results = connection ? dom.quoteSearchResults : dom.stockSearchResults;
+                const search = connection ? searchQuoteConnections : searchStocks;
+                input.value = "OLD";
+                const old = search();
+                input.value = "NEW";
+                const current = search();
+                resolves.NEW([{ symbol: "NEW", name: "New", exchange: "TEST" }]);
+                await current;
+                resolves.OLD([{ symbol: "OLD", name: "Old", exchange: "TEST" }]);
+                await old;
+                const winner = results.querySelector(".stock-result").dataset.symbol;
+                input.value = "LATE";
+                const late = search();
+                if (connection) { closeQuoteConnectionModal(); openQuoteConnectionModal(); }
+                else { hideStockForm(); showStockForm(); }
+                input.value = "LATE";
+                resolves.LATE([{ symbol: "LATE", name: "Late", exchange: "TEST" }]);
+                await late;
+                return { winner, staleButtons: results.querySelectorAll(".stock-result").length };
+            }, connection);
+            assert.equal(result.winner, "NEW");
+            assert.equal(result.staleButtons, 0);
+        });
+    }
+
+    await check("F14 add and clone use the current Korean date after midnight", async () => {
+        const { page } = await scenario([stock("A", { positions: [position(1)] })]);
+        await page.clock.install({ time: new Date("2026-10-01T15:01:00Z") });
+        await page.locator("#addPositionBtn").click();
+        assert.equal(await page.locator("#buyDate").inputValue(), "2026-10-02");
+        await page.locator("#cancelPositionBtn").click();
+        await page.locator(".clonePositionBtn").click();
+        assert.equal(await page.locator("#buyDate").inputValue(), "2026-10-02");
+    });
+
+    await check("F15 Enter moves input focus and activates save and cancel buttons", async () => {
+        const { page } = await scenario([stock()]);
+        await page.locator("#addPositionBtn").click();
+        await page.locator("#buyPrice").fill("10.00");
+        await page.locator("#buyPrice").press("Enter");
+        assert.equal(await page.evaluate(() => document.activeElement.id), "buyQty");
+        await page.locator("#buyQty").fill("0.005");
+        await page.locator("#savePositionBtn").focus();
+        await page.keyboard.press("Enter");
+        await page.locator("#positionModal").waitFor({ state: "hidden" });
+        assert.equal((await saved(page))[0].positions[0].buyQty, 0.005);
+        await page.locator("#addPositionBtn").click();
+        await page.locator("#cancelPositionBtn").focus();
+        await page.keyboard.press("Enter");
+        await page.locator("#positionModal").waitFor({ state: "hidden" });
+        assert.equal((await saved(page))[0].positions.length, 1);
+        await page.locator(".sellBtn").click();
+        await page.locator("#cancelTradeBtn").focus();
+        await page.keyboard.press("Enter");
+        await page.locator("#tradeModal").waitFor({ state: "hidden" });
+    });
+
+    await check("F16 impossible declines preserve the last valid price and allow large rises", async () => {
+        const { page, alerts } = await scenario([stock()]);
+        await page.goto(`${base}/pages/calculator.html`);
+        await page.locator("#autoDecimal").uncheck();
+        await page.locator("#currentPrice").fill("25.50");
+        await page.locator("#changePercent").fill("3");
+        await page.locator("#convertPriceBtn").click();
+        const valid = await page.locator("#basePrice").inputValue();
+        assert.equal(valid, "26.29");
+        for (const percent of ["100", "150"]) {
+            await page.locator("#changePercent").fill(percent);
+            await page.locator("#convertPriceBtn").click();
+            assert.equal(await page.locator("#basePrice").inputValue(), valid);
+        }
+        assert.equal(alerts.filter(message => message.includes("100% 미만")).length, 2);
+        await page.locator("#changeSignBtn").click();
+        await page.locator("#convertPriceBtn").click();
+        assert.equal(await page.locator("#basePrice").inputValue(), "10.20");
+    });
+
+    await check("F17 context menus remain accessible at screen edges and close on scroll", async () => {
+        const { page } = await scenario(Array.from({ length: 30 }, (_, index) => stock(`S-${index}`)));
+        await page.setViewportSize({ width: 1024, height: 600 });
+        await page.locator(".stock-card").last().click({ button: "right" });
+        for (const [x, y] of [[0, 0], [1023, 0], [0, 599], [1023, 599]]) {
+            const bounds = await page.evaluate(([x, y]) => {
+                showStockContextMenu(getStockKey(getStock()), x, y);
+                const rect = dom.stockContextMenu.getBoundingClientRect();
+                return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+            }, [x, y]);
+            assert(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= 1024 && bounds.bottom <= 600);
+        }
+        await page.locator("#openStockSettingsMenuBtn").click();
+        assert.equal(await page.locator("#stockSettingsModal").isVisible(), true);
+        await page.locator("#cancelStockSettingsBtn").click();
+        await page.evaluate(() => { showStockContextMenu(getStockKey(getStock()), 500, 500); dom.stockList.scrollTop = 0; });
+        await page.waitForFunction(() => dom.stockContextMenu.hidden);
+    });
+
+    await check("F18 a hung quote times out, keeps the last price and resumes next interval", async () => {
+        const { page } = await scenario([stock("A", { connected: true, symbol: "A", currentPrice: 25 })]);
+        await page.clock.install();
+        await page.evaluate(() => {
+            window.requestCalls = 0;
+            window.fetch = () => ++window.requestCalls === 1 ? new Promise(() => {})
+                : Promise.resolve({ ok: true, json: async () => ({ c: 30 }) });
+            SilverSettings.tryUpdate({ finnhubApiKey: "TEST", apiRefreshIntervalMinutes: 1,
+                priceCacheBySymbol: { A: { price: 25, cachedAt: 0, updatedAt: "2026-10-06T00:00:00Z" } } });
+        });
+        await page.clock.runFor(15001);
+        await page.waitForFunction(() => SilverSettings.load().apiFailureCountBySymbol.A === 1);
+        assert.equal(await page.locator("#currentPriceText").textContent(), "$25");
+        assert.equal(await page.locator("#updatePriceBtn").isDisabled(), false);
+        await page.clock.fastForward(45000);
+        await page.waitForFunction(() => getStock().currentPrice === 30);
+        assert.equal(await page.evaluate(() => window.requestCalls), 2);
+        assert.equal(await page.locator("#priceApiStatus").textContent(), "🟢 정상");
+    });
+
     assert.deepEqual(errors, []);
     console.log(`${passed} browser scenarios passed; no uncaught page errors.`);
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {

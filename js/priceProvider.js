@@ -1,8 +1,28 @@
 ﻿const PriceProvider = (() => {
     const CACHE_TTL_MS = 30 * 1000;
     const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
-    const priceMemoryCache = new Map();
+    const REQUEST_TIMEOUT_MS = 15 * 1000;
     const searchMemoryCache = new Map();
+
+    async function fetchJson(url) {
+        const controller = new AbortController();
+        let timer;
+        const timeout = new Promise((resolve, reject) => {
+            timer = setTimeout(() => {
+                controller.abort();
+                reject(new Error("시세 요청 시간이 초과되었습니다."));
+            }, REQUEST_TIMEOUT_MS);
+        });
+        try {
+            return await Promise.race([timeout, (async () => {
+                const response = await fetch(url, { signal: controller.signal });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            })()]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
 
     function getEffectiveApiKey() {
         const settings = SilverSettings.load();
@@ -14,18 +34,8 @@
 
     function getCachedPrice(symbol) {
         const normalizedSymbol = String(symbol || "").trim().toUpperCase();
-        const memoryCached = priceMemoryCache.get(normalizedSymbol);
-
-        if (memoryCached) {
-            return memoryCached;
-        }
-
         const settings = SilverSettings.load();
         const localCached = settings.priceCacheBySymbol?.[normalizedSymbol] || null;
-
-        if (localCached) {
-            priceMemoryCache.set(normalizedSymbol, localCached);
-        }
 
         return localCached;
     }
@@ -39,9 +49,7 @@
             cachedAt: Date.now()
         };
 
-        priceMemoryCache.set(normalizedSymbol, cacheItem);
-
-        SilverSettings.update({
+        const saved = SilverSettings.tryUpdate({
             priceUpdatedAtBySymbol: {
                 ...(settings.priceUpdatedAtBySymbol || {}),
                 [normalizedSymbol]: updatedAt
@@ -51,6 +59,7 @@
                 [normalizedSymbol]: cacheItem
             }
         });
+        return Boolean(saved);
     }
 
     const relatedSymbolMap = {
@@ -152,15 +161,9 @@
         }
 
         try {
-            const response = await fetch(
+            const data = await fetchJson(
                 `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(normalizedSymbol)}&token=${encodeURIComponent(apiKey)}`
             );
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
-            const data = await response.json();
             const price = Number(data.c);
 
             if (!Number.isFinite(price) || price <= 0) {
@@ -168,14 +171,15 @@
             }
 
             const updatedAt = new Date().toISOString();
-            saveCachedPrice(normalizedSymbol, price, updatedAt);
+            const cacheSaved = saveCachedPrice(normalizedSymbol, price, updatedAt);
 
             return {
                 ok: true,
                 status: "OK",
                 message: "정상 연결",
                 price,
-                updatedAt
+                updatedAt,
+                cacheSaved
             };
         } catch (error) {
             return {
@@ -208,15 +212,9 @@
         }
 
         try {
-            const response = await fetch(
+            const data = await fetchJson(
                 `https://finnhub.io/api/v1/search?q=${encodeURIComponent(normalizedQuery)}&token=${encodeURIComponent(apiKey)}`
             );
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
-            const data = await response.json();
 
             const apiResults = (data.result || [])
                 .filter(item => item.symbol && item.description)
