@@ -1,5 +1,6 @@
 let selectedIndex = 0;
 let editingPositionId = null;
+let editingPositionStockId = null;
 let editingTrade = null;
 let draggedSymbol = null;
 let searchDebounceTimer = null;
@@ -7,6 +8,8 @@ let contextMenuStockId = null;
 let settingsStockId = null;
 let pendingQuoteConnection = null;
 let connectionSearchDebounceTimer = null;
+const quoteRequests = new Map();
+let pendingQuoteCount = 0;
 
 let stocks = PortfolioStorage.loadStocks();
 
@@ -79,20 +82,63 @@ const dom = {
     sellQty: document.getElementById("sellQty")
 };
 
-function saveStocks(options = {}) {
-    PortfolioStorage.saveStocks(stocks);
+function syncStocks(nextStocks) {
+    const selectedId = getStockKey(getStock());
+    stocks = nextStocks;
+    const nextIndex = stocks.findIndex(stock => getStockKey(stock) === selectedId);
+    selectedIndex = nextIndex === -1 ? 0 : nextIndex;
+}
 
-    if (!options.silent) {
-        UIFeedback.showToast();
+async function persistStockChange(update, options = {}) {
+    const button = options.button;
+    if (button?.disabled) return false;
+    if (button) button.disabled = true;
+
+    try {
+        const result = await PortfolioStorage.updateStocks(latest => {
+            const changed = update(latest);
+            if (changed === false) return false;
+            PositionService.recalculateAllPositions(latest);
+            return true;
+        });
+        syncStocks(result.stocks);
+        refreshUI();
+
+        if (result.changed && !options.silent) UIFeedback.showToast();
+        return result.changed;
+    } catch (error) {
+        console.warn("Portfolio data could not be saved.", error);
+        alert("저장하지 못했습니다. 브라우저 저장 공간을 확인하고 다시 시도해 주세요.");
+        return false;
+    } finally {
+        if (button) button.disabled = false;
     }
 }
 
 function formatMoney(value) {
-    return `$${formatNumber(value, 2)}`;
+    return value == null ? "—" : `$${formatNumber(value, 2)}`;
 }
 
 function formatQty(value) {
-    return formatNumber(value, 2);
+    return formatEditableNumber(value);
+}
+
+function formatRate(value) {
+    return value === null ? "—" : `${value.toFixed(2)}%`;
+}
+
+function formatEditableNumber(value) {
+    const number = toNumber(value);
+    const [mantissa, exponent = "0"] = String(Math.abs(number)).split("e");
+    const digits = mantissa.replace(".", "");
+    const point = (mantissa.includes(".") ? mantissa.indexOf(".") : mantissa.length)
+        + Number(exponent);
+    const expanded = point <= 0 ? `0.${"0".repeat(-point)}${digits}`
+        : point >= digits.length ? digits + "0".repeat(point - digits.length)
+        : `${digits.slice(0, point)}.${digits.slice(point)}`;
+    const [integer, fraction] = expanded.split(".");
+    return (number < 0 ? "-" : "") + integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+        + (fraction === undefined ? "" : `.${fraction}`);
 }
 
 function formatNumber(value, maxDecimals = 2) {
@@ -202,11 +248,11 @@ function normalizePlainNumberInput(input) {
         : parts.join(".");
 }
 
-function formatInputOnBlur(input, maxDecimals = 2) {
+function formatInputOnBlur(input) {
     const number = parseFormattedNumber(input.value);
 
     if (number > 0) {
-        input.value = formatNumber(number, maxDecimals);
+        input.value = formatEditableNumber(number);
     }
 }
 
@@ -298,6 +344,7 @@ function moveToNextModalField(modal, currentField) {
 
 function resetPositionForm() {
     editingPositionId = null;
+    editingPositionStockId = null;
     dom.positionModalTitle.textContent = "포지션 추가";
     dom.buyPrice.value = "";
     dom.buyQty.value = "";
@@ -554,7 +601,7 @@ function renderPositionCard(position) {
                     </div>
                     <div class="info-item">
                         <span class="info-label">수익률</span>
-                        <span class="info-value">${getPositionRate(position).toFixed(2)}%</span>
+                        <span class="info-value">${formatRate(getPositionRate(position))}</span>
                     </div>
                     <div class="tag-list">
                         <span class="info-label">태그</span>
@@ -656,11 +703,12 @@ function renderPriceStatus(stock, status = null, message = null) {
     const updatedAt = updatedAtValue
         ? new Date(updatedAtValue).toLocaleString("ko-KR")
         : "없음";
-    const nextStatus = status || (failureCount >= 2 ? "ERROR" : failureCount === 1 ? "WAIT" : "OK");
+    const price = getCurrentPrice(stock);
+    const nextStatus = status || (failureCount >= 2 ? "ERROR" : failureCount === 1 || price === null ? "WAIT" : "OK");
     const nextMessage = message
-        || (failureCount >= 2 ? "🔴 연결 끊김" : failureCount === 1 ? "🟡 연결 불안정" : "🟢 정상");
+        || (failureCount >= 2 ? "🔴 연결 끊김" : failureCount === 1 ? "🟡 연결 불안정" : price === null ? "⚪ 시세 확인 전" : "🟢 정상");
 
-    dom.currentPriceText.textContent = stock ? formatMoney(stock.currentPrice || 0) : "$0";
+    dom.currentPriceText.textContent = formatMoney(price);
     dom.averagePriceText.textContent = `평단가: ${formatMoney(calculateStockAveragePrice(stock))}`;
     dom.priceUpdatedAt.textContent = `최근 갱신: ${updatedAt}`;
     dom.priceApiStatus.className = "api-status";
@@ -715,36 +763,50 @@ async function updateCurrentPrice(options = {}) {
     }
 
     dom.updatePriceBtn.disabled = true;
+    pendingQuoteCount += 1;
     dom.updatePriceBtn.textContent = "조회 중";
     if (!silent) {
         renderPriceStatus(stock, "WAIT", "API 조회 중");
     }
 
-    const result = await PriceProvider.getCurrentPrice(stock.symbol, {
-        force: options.force === true
-    });
+    const stockId = getStockKey(stock);
+    const symbol = stock.symbol;
+    const revision = Number(stock.quoteRevision) || 0;
+    const request = (quoteRequests.get(stockId) || 0) + 1;
+    quoteRequests.set(stockId, request);
+    const matchesRequest = current => current && isPriceConnected(current)
+        && current.symbol === symbol && (Number(current.quoteRevision) || 0) === revision
+        && quoteRequests.get(stockId) === request;
 
-    if (result.price) {
-        stock.currentPrice = result.price;
-        saveStocks({ silent: true });
-        setApiFailureCount(stock.symbol, result.ok ? 0 : getApiFailureCount(stock.symbol) + 1);
-        renderPriceStatus(
-            stock,
-            result.ok ? "OK" : getApiFailureCount(stock.symbol) >= 2 ? "ERROR" : "WAIT",
-            result.ok ? "🟢 정상" : getApiFailureCount(stock.symbol) >= 2 ? "🔴 연결 끊김" : "🟡 연결 불안정"
-        );
-        refreshUI();
-    } else {
-        setApiFailureCount(stock.symbol, getApiFailureCount(stock.symbol) + 1);
-        renderPriceStatus(
-            stock,
-            getApiFailureCount(stock.symbol) >= 2 ? "ERROR" : "WAIT",
-            getApiFailureCount(stock.symbol) >= 2 ? "🔴 연결 끊김" : "🟡 연결 불안정"
-        );
+    try {
+        const result = await PriceProvider.getCurrentPrice(symbol, { force: options.force === true });
+        const price = Number(result.price);
+
+        if (Number.isFinite(price) && price > 0) {
+            const saved = await persistStockChange(latest => {
+                const current = latest.find(item => getStockKey(item) === stockId);
+                if (!matchesRequest(current)) return false;
+                current.currentPrice = price;
+            }, { silent: true });
+            if (!saved) return;
+        } else {
+            // Failed requests must also respect changes made in another tab.
+            syncStocks(PortfolioStorage.loadStocks());
+        }
+
+        const current = getStockById(stockId);
+        if (!matchesRequest(current)) return;
+        setApiFailureCount(symbol, result.ok ? 0 : getApiFailureCount(symbol) + 1);
+        if (getStockKey(getStock()) === stockId) {
+            refreshUI();
+        }
+    } finally {
+        pendingQuoteCount -= 1;
+        if (pendingQuoteCount === 0) {
+            dom.updatePriceBtn.disabled = false;
+            dom.updatePriceBtn.textContent = "현재가 새로고침";
+        }
     }
-
-    dom.updatePriceBtn.disabled = false;
-    dom.updatePriceBtn.textContent = "현재가 새로고침";
 }
 
 function schedulePriceRefresh() {
@@ -762,6 +824,7 @@ function schedulePriceRefresh() {
 
 function openAddPositionModal() {
     resetPositionForm();
+    editingPositionStockId = getStockKey(getStock());
     dom.buyDate.value = new Date().toISOString().slice(0, 10);
     openModal(dom.positionModal);
     dom.buyPrice.focus();
@@ -769,9 +832,10 @@ function openAddPositionModal() {
 
 function openEditPositionModal(position) {
     editingPositionId = position.id;
+    editingPositionStockId = getStockKey(getStock());
     dom.positionModalTitle.textContent = "포지션 수정";
-    dom.buyPrice.value = formatNumber(position.buyPrice, 2);
-    dom.buyQty.value = formatNumber(position.buyQty, 2);
+    dom.buyPrice.value = formatEditableNumber(position.buyPrice);
+    dom.buyQty.value = formatEditableNumber(position.buyQty);
     dom.buyDate.value = position.buyDate;
     dom.buyMemo.value = position.memo;
 
@@ -781,9 +845,10 @@ function openEditPositionModal(position) {
 
 function openClonePositionModal(position) {
     editingPositionId = null;
+    editingPositionStockId = getStockKey(getStock());
     dom.positionModalTitle.textContent = "포지션 복제";
-    dom.buyPrice.value = formatNumber(position.buyPrice, 2);
-    dom.buyQty.value = formatNumber(position.buyQty, 2);
+    dom.buyPrice.value = formatEditableNumber(position.buyPrice);
+    dom.buyQty.value = formatEditableNumber(position.buyQty);
     dom.buyDate.value = new Date().toISOString().slice(0, 10);
     dom.buyMemo.value = position.memo;
 
@@ -792,65 +857,72 @@ function openClonePositionModal(position) {
     dom.buyQty.select();
 }
 
-function savePosition() {
-    const stock = getStock();
+async function savePosition() {
+    const stockId = editingPositionStockId || getStockKey(getStock());
+    const positionId = editingPositionId;
     const price = parseFormattedNumber(dom.buyPrice.value);
     const qty = parseFormattedNumber(dom.buyQty.value);
     const date = dom.buyDate.value;
     const memo = dom.buyMemo.value.trim();
 
-    if (!stock) return;
+    if (!stockId) return;
 
     if (!price || price <= 0 || !qty || qty <= 0) {
         alert("매수가와 수량을 0보다 큰 숫자로 입력해 주세요.");
         return;
     }
 
-    if (editingPositionId === null) {
-        stock.positions.push({
-            id: Date.now(),
-            number: stock.positions.reduce(
-                (max, position) => Math.max(max, position.number),
-                0
-            ) + 1,
-            type: "TRADING",
-            buyPrice: price,
-            buyQty: qty,
-            remainQty: qty,
-            buyDate: date,
-            memo,
-            status: "OPEN",
-            tags: [],
-            realizedPnL: 0,
-            trades: []
-        });
-    } else {
-        const position = getPositionById(editingPositionId);
-
-        if (!position) return;
-
-        const soldQty = getTotalSoldQty(position);
-
-        if (qty < soldQty) {
-            alert(`이미 매도한 수량(${formatQty(soldQty)}주)보다 적게 수정할 수 없습니다.`);
-            return;
+    const saved = await persistStockChange(latest => {
+        const stock = latest.find(item => getStockKey(item) === stockId);
+        if (!stock) {
+            alert("다른 탭에서 이 종목이 삭제되어 저장할 수 없습니다.");
+            return false;
         }
+        if (positionId === null) {
+            stock.positions.push({
+                id: PositionService.nextId(stock.positions),
+                number: stock.positions.reduce(
+                    (max, position) => Math.max(max, position.number),
+                    0
+                ) + 1,
+                type: "TRADING",
+                buyPrice: price,
+                buyQty: qty,
+                remainQty: qty,
+                buyDate: date,
+                memo,
+                status: "OPEN",
+                tags: [],
+                realizedPnL: 0,
+                trades: []
+            });
+        } else {
+            const position = stock.positions.find(item => item.id === positionId);
+            if (!position) {
+                alert("다른 탭에서 이 포지션이 삭제되어 저장할 수 없습니다.");
+                return false;
+            }
 
-        position.buyPrice = price;
-        position.buyQty = qty;
-        position.buyDate = date;
-        position.memo = memo;
+            const soldQty = getTotalSoldQty(position);
 
-        recalculatePosition(position);
-    }
+            if (qty < soldQty) {
+                alert(`이미 매도한 수량(${formatQty(soldQty)}주)보다 적게 수정할 수 없습니다.`);
+                return false;
+            }
 
-    saveStocks();
+            position.buyPrice = price;
+            position.buyQty = qty;
+            position.buyDate = date;
+            position.memo = memo;
+        }
+    }, { button: dom.savePositionBtn });
+    if (!saved) return;
     resetPositionForm();
     closeModal(dom.positionModal);
     refreshUI();
 }
 
-function deletePosition(positionId) {
+async function deletePosition(positionId) {
     const stock = getStock();
     const position = getPositionById(positionId);
 
@@ -860,10 +932,12 @@ function deletePosition(positionId) {
         return;
     }
 
-    stock.positions = stock.positions.filter(item => item.id !== position.id);
-
-    saveStocks();
-    refreshUI();
+    const stockId = getStockKey(stock);
+    await persistStockChange(latest => {
+        const current = latest.find(item => getStockKey(item) === stockId);
+        if (!current || !current.positions.some(item => item.id === position.id)) return false;
+        current.positions = current.positions.filter(item => item.id !== position.id);
+    });
 }
 
 function showStockContextMenu(stockId, x, y) {
@@ -878,7 +952,7 @@ function hideStockContextMenu() {
     dom.stockContextMenu.hidden = true;
 }
 
-function deleteStock(stockId) {
+async function deleteStock(stockId) {
     const stock = getStockById(stockId);
 
     if (!stock) return;
@@ -887,9 +961,11 @@ function deleteStock(stockId) {
         return;
     }
 
-    stocks = stocks.filter(item => getStockKey(item) !== stockId);
-    selectedIndex = Math.max(0, Math.min(selectedIndex, stocks.length - 1));
-    saveStocks();
+    await persistStockChange(latest => {
+        const index = latest.findIndex(item => getStockKey(item) === stockId);
+        if (index === -1) return false;
+        latest.splice(index, 1);
+    });
     hideStockContextMenu();
     refreshUI();
 }
@@ -933,34 +1009,42 @@ function closeStockSettingsModal() {
     closeModal(dom.stockSettingsModal);
 }
 
-function saveStockSettings() {
-    const stock = getStockById(settingsStockId);
+async function saveStockSettings() {
+    const stockId = settingsStockId;
+    const connection = pendingQuoteConnection;
     const displayName = dom.stockDisplayName.value.trim();
 
-    if (!stock) return;
+    if (!getStockById(stockId)) return;
 
     if (!displayName) {
         alert("표시 이름을 입력해 주세요.");
         return;
     }
 
-    stock.displayName = displayName;
-
-    if (pendingQuoteConnection) {
-        const symbolChanged = stock.symbol !== pendingQuoteConnection.symbol;
-
-        stock.symbol = pendingQuoteConnection.symbol;
-        stock.companyName = pendingQuoteConnection.companyName;
-        stock.name = pendingQuoteConnection.companyName;
-        stock.exchange = pendingQuoteConnection.exchange;
-        stock.connected = true;
-
-        if (symbolChanged) {
-            stock.currentPrice = null;
+    const saved = await persistStockChange(latest => {
+        const stock = latest.find(item => getStockKey(item) === stockId);
+        if (!stock) return false;
+        if (connection && latest.some(item => getStockKey(item) !== stockId && item.symbol === connection.symbol)) {
+            alert("이미 다른 종목에 연결되어 있습니다.");
+            return false;
         }
-    }
+        stock.displayName = displayName;
+        if (connection) {
+            const symbolChanged = stock.symbol !== connection.symbol;
 
-    saveStocks();
+            stock.symbol = connection.symbol;
+            stock.companyName = connection.companyName;
+            stock.name = connection.companyName;
+            stock.exchange = connection.exchange;
+            stock.connected = true;
+
+            if (symbolChanged) {
+                stock.currentPrice = null;
+                stock.quoteRevision = (Number(stock.quoteRevision) || 0) + 1;
+            }
+        }
+    }, { button: dom.saveStockSettingsBtn });
+    if (!saved) return;
     closeStockSettingsModal();
     refreshUI();
 }
@@ -1040,15 +1124,16 @@ function connectStockQuote(result) {
 function openTradeModal(position, trade) {
     editingTrade = {
         mode: trade ? "edit" : "add",
-        position,
-        trade: trade || null
+        stockId: getStockKey(getStock()),
+        positionId: position.id,
+        tradeId: trade?.id ?? null
     };
 
     dom.tradeModalTitle.textContent = trade
         ? "부분매도 수정"
         : `포지션 #${position.number} 부분매도`;
-    dom.sellPrice.value = trade ? formatNumber(trade.price, 2) : "";
-    dom.sellQty.value = trade ? formatNumber(trade.qty, 2) : "";
+    dom.sellPrice.value = trade ? formatEditableNumber(trade.price) : "";
+    dom.sellQty.value = trade ? formatEditableNumber(trade.qty) : "";
 
     if (!trade) {
         const stock = getStock();
@@ -1056,7 +1141,7 @@ function openTradeModal(position, trade) {
         const price = toNumber(stock?.currentPrice) || toNumber(cached?.price);
 
         if (price > 0) {
-            dom.sellPrice.value = price.toFixed(2);
+            dom.sellPrice.value = formatEditableNumber(price);
         }
     }
 
@@ -1064,49 +1149,57 @@ function openTradeModal(position, trade) {
     dom.sellPrice.focus();
 }
 
-function saveTrade() {
+async function saveTrade() {
     const price = parseFormattedNumber(dom.sellPrice.value);
     const qty = parseFormattedNumber(dom.sellQty.value);
 
     if (!editingTrade) return;
+    const { mode, stockId, positionId, tradeId } = editingTrade;
 
     if (!price || price <= 0 || !qty || qty <= 0) {
         alert("매도가와 매도수량을 0보다 큰 숫자로 입력해 주세요.");
         return;
     }
 
-    const { mode, position, trade } = editingTrade;
-    const availableQty = mode === "edit"
-        ? toNumber(position.remainQty) + toNumber(trade.qty)
-        : toNumber(position.remainQty);
+    const saved = await persistStockChange(latest => {
+        const stock = latest.find(item => getStockKey(item) === stockId);
+        const position = stock?.positions.find(item => item.id === positionId);
+        const trade = position?.trades.find(item => item.id === tradeId);
+        if (!position || (mode === "edit" && !trade)) {
+            alert("다른 탭에서 이 거래 또는 포지션이 삭제되어 저장할 수 없습니다.");
+            return false;
+        }
+        recalculatePosition(position);
+        const availableQty = mode === "edit"
+            ? PositionService.sumQuantities(position.remainQty, trade.qty)
+            : toNumber(position.remainQty);
 
-    if (qty > availableQty) {
-        alert(`보유수량을 초과했습니다. 매도 가능 수량은 ${formatQty(availableQty)}주입니다.`);
-        return;
-    }
+        if (qty > availableQty) {
+            alert(`보유수량을 초과했습니다. 매도 가능 수량은 ${formatQty(availableQty)}주입니다.`);
+            return false;
+        }
 
-    if (mode === "add") {
-        position.trades.push({
-            id: Date.now(),
-            type: "SELL",
-            price,
-            qty,
-            date: new Date().toISOString(),
-            realizedPnL: 0
-        });
-    } else {
-        trade.price = price;
-        trade.qty = qty;
-    }
-
-    recalculatePosition(position);
-    saveStocks();
+        if (mode === "add") {
+            position.trades.push({
+                id: PositionService.nextId(position.trades),
+                type: "SELL",
+                price,
+                qty,
+                date: new Date().toISOString(),
+                realizedPnL: 0
+            });
+        } else {
+            trade.price = price;
+            trade.qty = qty;
+        }
+    }, { button: dom.saveTradeBtn });
+    if (!saved) return;
     resetTradeForm();
     closeModal(dom.tradeModal);
     refreshUI();
 }
 
-function deleteTrade(positionId, tradeId) {
+async function deleteTrade(positionId, tradeId) {
     const position = getPositionById(positionId);
     const trade = getTradeById(position, tradeId);
 
@@ -1116,11 +1209,13 @@ function deleteTrade(positionId, tradeId) {
         return;
     }
 
-    position.trades = position.trades.filter(item => item.id !== trade.id);
-    recalculatePosition(position);
-
-    saveStocks();
-    refreshUI();
+    const stockId = getStockKey(getStock());
+    await persistStockChange(latest => {
+        const stock = latest.find(item => getStockKey(item) === stockId);
+        const current = stock?.positions.find(item => item.id === position.id);
+        if (!current || !current.trades.some(item => item.id === trade.id)) return false;
+        current.trades = current.trades.filter(item => item.id !== trade.id);
+    });
 }
 
 function showStockForm() {
@@ -1143,7 +1238,7 @@ function hideStockForm() {
     closeModal(dom.stockForm);
 }
 
-function addStockFromData({ symbol, name, exchange = "", memo = "" }) {
+async function addStockFromData({ symbol, name, exchange = "", memo = "" }) {
     const normalizedSymbol = String(symbol || "").trim().toUpperCase();
     const displayName = String(name || normalizedSymbol).trim();
     const connected = Boolean(normalizedSymbol);
@@ -1158,29 +1253,35 @@ function addStockFromData({ symbol, name, exchange = "", memo = "" }) {
         return;
     }
 
-    stocks.push({
-        id: `stock-${Date.now()}`,
-        displayName,
-        name: displayName,
-        symbol: normalizedSymbol,
-        companyName: connected ? displayName : "",
-        exchange: connected ? exchange : "",
-        connected,
-        memo,
-        currentPrice: null,
-        positions: []
-    });
-
-    selectedIndex = stocks.length - 1;
+    const stockId = `stock-${crypto.randomUUID()}`;
+    const saved = await persistStockChange(latest => {
+        if (connected && latest.some(stock => stock.symbol === normalizedSymbol)) {
+            alert("이미 추가된 시세 연결입니다.");
+            return false;
+        }
+        latest.push({
+            id: stockId,
+            displayName,
+            name: displayName,
+            symbol: normalizedSymbol,
+            companyName: connected ? displayName : "",
+            exchange: connected ? exchange : "",
+            connected,
+            memo,
+            currentPrice: null,
+            positions: []
+        });
+    }, { button: dom.saveStockBtn });
+    if (!saved) return;
+    selectedIndex = stocks.findIndex(stock => getStockKey(stock) === stockId);
     rememberRecentStock(stocks[selectedIndex]);
 
-    saveStocks();
     hideStockForm();
     refreshUI();
 }
 
 function saveStock() {
-    addStockFromData({
+    return addStockFromData({
         name: dom.stockName.value.trim(),
         symbol: "",
         memo: dom.stockMemo.value.trim()
@@ -1223,6 +1324,11 @@ async function searchStocks() {
 }
 
 function bindEvents() {
+    window.addEventListener("storage", event => {
+        if (event.key !== "portfolioStocks" && event.key !== null) return;
+        syncStocks(PortfolioStorage.loadStocks());
+        refreshUI();
+    });
     dom.stockList.addEventListener("click", event => {
         hideStockContextMenu();
         const pinButton = event.target.closest(".pin-stock-btn");
@@ -1414,14 +1520,14 @@ function bindEvents() {
     });
     dom.buyPrice.addEventListener("input", () => normalizePriceInput(dom.buyPrice));
     dom.buyPrice.addEventListener("keydown", event => handleDecimalKey(event, dom.buyPrice));
-    dom.buyPrice.addEventListener("blur", () => formatInputOnBlur(dom.buyPrice, 2));
+    dom.buyPrice.addEventListener("blur", () => formatInputOnBlur(dom.buyPrice));
 
     [dom.buyQty, dom.sellPrice, dom.sellQty].forEach(input => {
         input.addEventListener("focus", () => {
             input.value = input.value.replace(/,/g, "");
         });
         input.addEventListener("input", () => normalizePlainNumberInput(input));
-        input.addEventListener("blur", () => formatInputOnBlur(input, 2));
+        input.addEventListener("blur", () => formatInputOnBlur(input));
     });
 
     dom.addPositionBtn.addEventListener("click", openAddPositionModal);

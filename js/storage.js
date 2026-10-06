@@ -20,9 +20,9 @@ const PortfolioStorage = (() => {
         return JSON.parse(JSON.stringify(value));
     }
 
-    function normalizeTrade(trade) {
+    function normalizeTrade(trade, index) {
         return {
-            id: Number(trade.id) || Date.now(),
+            id: Number(trade.id) || -(index + 1),
             type: trade.type || "SELL",
             price: Number(trade.price) || 0,
             qty: Number(trade.qty) || 0,
@@ -38,7 +38,7 @@ const PortfolioStorage = (() => {
             : [];
 
         return {
-            id: Number(position.id) || Date.now() + index,
+            id: Number(position.id) || -(index + 1),
             number: Number(position.number) || index + 1,
             type: position.type || "TRADING",
             buyPrice: Number(position.buyPrice) || 0,
@@ -53,19 +53,20 @@ const PortfolioStorage = (() => {
         };
     }
 
-    function normalizeStock(stock) {
+    function normalizeStock(stock, index) {
         const symbol = (stock.symbol || "").toUpperCase();
         const displayName = stock.displayName || stock.name || symbol || "새 종목";
         const connected = stock.connected ?? Boolean(symbol);
 
         return {
-            id: stock.id || `stock-${symbol || Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            id: stock.id || `stock-${symbol || "manual"}-${index}`,
             displayName,
             name: stock.name || stock.companyName || symbol || "",
             symbol,
             companyName: stock.companyName || stock.name || symbol || "",
             exchange: stock.exchange || "",
             connected,
+            quoteRevision: Number(stock.quoteRevision) || 0,
             currentPrice: stock.currentPrice === null
                 ? null
                 : Number(stock.currentPrice) || null,
@@ -80,12 +81,8 @@ const PortfolioStorage = (() => {
         try {
             const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
 
-            if (Array.isArray(saved) && saved.length > 0) {
-                const normalizedStocks = saved.map(normalizeStock);
-
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedStocks));
-
-                return normalizedStocks;
+            if (Array.isArray(saved)) {
+                return saved.map(normalizeStock);
             }
         } catch (error) {
             console.warn("Portfolio data could not be loaded.", error);
@@ -94,12 +91,30 @@ const PortfolioStorage = (() => {
         return clone(defaultStocks);
     }
 
-    function saveStocks(stocks) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(stocks));
+    let pendingWrite = Promise.resolve();
+
+    function updateStocks(update) {
+        const commit = () => {
+            // Read inside the lock: another tab may have saved since this page loaded.
+            const latest = loadStocks();
+            const changed = update(latest) !== false;
+
+            if (changed) {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(latest));
+            }
+
+            return { stocks: latest, changed };
+        };
+        const run = () => typeof navigator !== "undefined" && navigator.locks
+            ? navigator.locks.request(STORAGE_KEY, commit)
+            : commit();
+        const result = pendingWrite.then(run);
+        pendingWrite = result.catch(() => {});
+        return result;
     }
 
     return {
         loadStocks,
-        saveStocks
+        updateStocks
     };
 })();

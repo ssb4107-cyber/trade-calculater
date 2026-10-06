@@ -1,47 +1,52 @@
 // ===== Dashboard =====
 
 function toNumber(value) {
-    return Number(value) || 0;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
 }
 
 function getSelectedStock() {
     return stocks[selectedIndex] || null;
 }
 
-function getCurrentPrice() {
-    const stock = getSelectedStock();
-
-    if (!stock || stock.connected === false || !stock.symbol) {
-        return 0;
+function getCurrentPrice(stock = getSelectedStock()) {
+    if (!stock || stock.connected === false || !stock.symbol || stock.currentPrice == null) {
+        return null;
     }
 
-    return toNumber(stock.currentPrice);
+    const price = Number(stock.currentPrice);
+    return Number.isFinite(price) && price > 0 ? price : null;
 }
 
-function getPositionValue(position) {
-    return getCurrentPrice() * toNumber(position.remainQty);
+function getPositionValue(position, stock = getSelectedStock()) {
+    const qty = toNumber(position.remainQty);
+    if (qty === 0) return 0;
+    const price = getCurrentPrice(stock);
+    return price === null ? null : price * qty;
 }
 
-function getPositionUnrealized(position) {
-    return (
-        getCurrentPrice() - toNumber(position.buyPrice)
-    ) * toNumber(position.remainQty);
+function getPositionUnrealized(position, stock = getSelectedStock()) {
+    const qty = toNumber(position.remainQty);
+    if (qty === 0) return 0;
+    const price = getCurrentPrice(stock);
+    return price === null ? null : (price - toNumber(position.buyPrice)) * qty;
 }
 
 function getPositionRate(position) {
     const buyPrice = toNumber(position.buyPrice);
 
     if (buyPrice === 0) return 0;
-
-    return (
-        (getCurrentPrice() - buyPrice)
-        / buyPrice
-    ) * 100;
+    if (toNumber(position.remainQty) === 0) {
+        const cost = buyPrice * toNumber(position.buyQty);
+        return cost === 0 ? 0 : toNumber(position.realizedPnL) / cost * 100;
+    }
+    const price = getCurrentPrice();
+    return price === null ? null : (price - buyPrice) / buyPrice * 100;
 }
 
 function getPositionTotalPnL(position) {
-    return toNumber(position.realizedPnL)
-        + getPositionUnrealized(position);
+    const unrealized = getPositionUnrealized(position);
+    return unrealized === null ? null : toNumber(position.realizedPnL) + unrealized;
 }
 
 function getRemainCost(position) {
@@ -50,8 +55,7 @@ function getRemainCost(position) {
 }
 
 function getPositionMarketValue(position) {
-    return getCurrentPrice()
-        * toNumber(position.remainQty);
+    return getPositionValue(position);
 }
 
 function calculateDashboard(stock) {
@@ -69,17 +73,17 @@ function calculateDashboard(stock) {
         summary.totalBuy +=
             toNumber(position.buyPrice) * toNumber(position.buyQty);
 
-        summary.totalValue +=
-            getPositionValue(position);
-
         summary.realized +=
             toNumber(position.realizedPnL);
-
-        summary.unrealized +=
-            getPositionUnrealized(position);
+        const value = getPositionValue(position, stock);
+        const unrealized = getPositionUnrealized(position, stock);
+        summary.totalValue = value === null || summary.totalValue === null
+            ? null : summary.totalValue + value;
+        summary.unrealized = unrealized === null || summary.unrealized === null
+            ? null : summary.unrealized + unrealized;
     });
 
-    summary.rate = summary.totalBuy === 0
+    summary.rate = summary.unrealized === null ? null : summary.totalBuy === 0
         ? 0
         : ((summary.realized + summary.unrealized) / summary.totalBuy) * 100;
 
@@ -88,19 +92,20 @@ function calculateDashboard(stock) {
 
 function renderDashboard() {
     const summary = calculateDashboard(getSelectedStock());
+    const money = value => value === null ? "—" : `$${value.toFixed(2)}`;
 
     document.getElementById("totalBuy").textContent =
-        `$${summary.totalBuy.toFixed(2)}`;
+        money(summary.totalBuy);
 
     document.getElementById("totalValue").textContent =
-        `$${summary.totalValue.toFixed(2)}`;
+        money(summary.totalValue);
 
     document.getElementById("realizedPnL").textContent =
-        `$${summary.realized.toFixed(2)}`;
+        money(summary.realized);
 
     document.getElementById("unrealizedPnL").textContent =
-        `$${summary.unrealized.toFixed(2)}`;
+        money(summary.unrealized);
 
     document.getElementById("totalRate").textContent =
-        `${summary.rate.toFixed(2)}%`;
+        summary.rate === null ? "—" : `${summary.rate.toFixed(2)}%`;
 }

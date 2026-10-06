@@ -163,7 +163,7 @@
             const data = await response.json();
             const price = Number(data.c);
 
-            if (!price || price <= 0) {
+            if (!Number.isFinite(price) || price <= 0) {
                 throw new Error("가격 데이터가 비어 있습니다.");
             }
 
