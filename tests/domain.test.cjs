@@ -184,7 +184,18 @@ function settingsGlobals(localStorage) {
     return { localStorage, window: { dispatchEvent() {} }, CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } } };
 }
 
-test("F09 wrong settings types fall back while valid settings and raw backup survive", () => {
+test("R05 corrupt oversales are rejected at very small quantities and overflow", () => {
+    for (const [buyQty, quantities] of [[1e-20, [2e-20]], [1e308, [1e308, 1e308]]]) {
+        const localStorage = storage();
+        const original = JSON.stringify([stock(null, false, [holding(buyQty, quantities.map((qty, index) => ({ id: index + 1, type: "SELL", qty, price: 12 })) )])]);
+        localStorage.setItem("portfolioStocks", original);
+        const context = runtime(["storage.js"], { localStorage });
+        assert.equal(vm.runInContext("PortfolioStorage.loadStocks()[0].positions.length", context), 0);
+        assert.equal(localStorage.getItem("portfolioStocks"), original);
+    }
+});
+
+test("F09 wrong settings types fall back while valid settings and raw backup survive", async () => {
     const localStorage = storage();
     const original = JSON.stringify({ stockOrder: {}, pinnedSymbols: ["A", null], recentSymbols: 1,
         apiRefreshIntervalMinutes: true, darkMode: true, priceCacheBySymbol: { A: null } });
@@ -195,12 +206,12 @@ test("F09 wrong settings types fall back while valid settings and raw backup sur
     assert.deepEqual(Array.from(loaded.pinnedSymbols), ["A"]);
     assert.equal(loaded.darkMode, true);
     assert.equal(loaded.apiRefreshIntervalMinutes, 5);
-    vm.runInContext("SilverSettings.update({ apiRefreshIntervalMinutes: 10 })", context);
+    await vm.runInContext("SilverSettings.update({ apiRefreshIntervalMinutes: 10 })", context);
     assert.equal(JSON.parse(localStorage.getItem("silverStrategySettings.recoveryBackup")).raw, original);
     assert.equal(vm.runInContext("SilverSettings.load().apiRefreshIntervalMinutes", context), 10);
 });
 
-test("F10 failed settings saves retain saved state and emit no success event", () => {
+test("F10 failed settings saves retain saved state and emit no success event", async () => {
     const localStorage = storage();
     localStorage.setItem("silverStrategySettings", JSON.stringify({ darkMode: false }));
     let events = 0;
@@ -208,7 +219,7 @@ test("F10 failed settings saves retain saved state and emit no success event", (
     globals.window.dispatchEvent = () => events += 1;
     const context = runtime(["settingsStore.js"], globals);
     localStorage.setItem = () => { throw new Error("quota"); };
-    assert.equal(vm.runInContext("SilverSettings.tryUpdate({ darkMode: true })", context), null);
+    assert.equal(await vm.runInContext("SilverSettings.tryUpdate({ darkMode: true })", context), null);
     assert.equal(vm.runInContext("SilverSettings.load().darkMode", context), false);
     assert.equal(events, 0);
 });

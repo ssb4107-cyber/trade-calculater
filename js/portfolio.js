@@ -9,6 +9,24 @@ let settingsStockId = null;
 let pendingQuoteConnection = null;
 let connectionSearchDebounceTimer = null;
 const quoteRequests = new Map();
+const modalSessions = new WeakMap();
+const modalOperations = new WeakMap();
+
+function modalSnapshot(modal) {
+    return JSON.stringify([...modal.querySelectorAll("input, textarea")].map(field =>
+        ["buyPrice", "buyQty", "sellPrice", "sellQty"].includes(field.id) ? parseFormattedNumber(field.value) : field.value));
+}
+
+function modalOperation(modal, extra = "") {
+    const snapshot = modalSnapshot(modal);
+    const session = modalSessions.get(modal);
+    let operation = modalOperations.get(modal);
+    if (!operation || operation.session !== session || operation.snapshot !== snapshot || operation.extra !== extra) {
+        operation = { session, snapshot, extra, operationId: crypto.randomUUID() };
+        modalOperations.set(modal, operation);
+    }
+    return operation;
+}
 let pendingQuoteCount = 0;
 let priceRefreshTarget = null;
 let priceRefreshInterval = null;
@@ -104,7 +122,7 @@ async function persistStockChange(update, options = {}) {
             if (changed === false) return false;
             PositionService.recalculateAllPositions(latest);
             return true;
-        });
+        }, { operationId: options.operationId });
         syncStocks(result.stocks);
         refreshUI();
 
@@ -114,7 +132,7 @@ async function persistStockChange(update, options = {}) {
         console.warn("Portfolio data could not be saved.", error);
         const message = error.name === "StorageRecoveryRequired"
             ? "손상된 저장 자료의 원본을 보호하고 있습니다. 자료 복구 후 다시 저장해 주세요."
-            : "저장하지 못했습니다. 브라우저 저장 공간을 확인하고 다시 시도해 주세요.";
+            : "저장하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요. 입력 내용은 유지됩니다.";
         if (options.silent) SafeStorage.notify(message);
         else alert(message);
         return false;
@@ -191,13 +209,8 @@ function getApiFailureCount(symbol) {
 }
 
 function setApiFailureCount(symbol, count) {
-    const settings = SilverSettings.load();
-
-    SilverSettings.tryUpdate({
-        apiFailureCountBySymbol: {
-            ...(settings.apiFailureCountBySymbol || {}),
-            [symbol]: count
-        }
+    return SilverSettings.tryMutate(settings => {
+        settings.apiFailureCountBySymbol[symbol] = count;
     });
 }
 
@@ -319,6 +332,7 @@ function recalculateAllPositions() {
 }
 
 function openModal(modal) {
+    modalSessions.set(modal, (modalSessions.get(modal) || 0) + 1);
     modal.style.display = "flex";
     modal.setAttribute("aria-hidden", "false");
 
@@ -327,6 +341,7 @@ function openModal(modal) {
 }
 
 function closeModal(modal) {
+    modalSessions.set(modal, (modalSessions.get(modal) || 0) + 1);
     modal.style.display = "none";
     modal.setAttribute("aria-hidden", "true");
 }
@@ -367,8 +382,7 @@ function resetTradeForm() {
     dom.sellQty.value = "";
 }
 
-function getOrderedStocks() {
-    const settings = SilverSettings.load();
+function getOrderedStocks(settings = SilverSettings.load()) {
     const pinned = settings.pinnedSymbols || [];
     const order = settings.stockOrder || [];
     // Existing saved orders remain manual until the user changes them.
@@ -406,51 +420,47 @@ function getOrderedStocks() {
     )];
 }
 
-function rememberRecentStock(stock) {
+async function rememberRecentStock(stock) {
     const key = getStockKey(stock);
-    const settings = SilverSettings.load();
-    const recentSymbols = [
-        key,
-        ...(settings.recentSymbols || []).filter(item => item !== key && item !== stock.symbol)
-    ].slice(0, 20);
-
-    SilverSettings.tryUpdate({ recentSymbols });
-}
-
-function togglePinnedStock(stock) {
-    const key = getStockKey(stock);
-    const settings = SilverSettings.load();
-    const pinnedSymbols = settings.pinnedSymbols || [];
-    const isPinned = pinnedSymbols.includes(key) || pinnedSymbols.includes(stock.symbol);
-    const nextPinned = isPinned
-        ? pinnedSymbols.filter(item => item !== key && item !== stock.symbol)
-        : [...pinnedSymbols, key];
-
-    SilverSettings.tryUpdate({ pinnedSymbols: nextPinned });
+    await SilverSettings.tryMutate(settings => {
+        settings.recentSymbols = [key, ...(settings.recentSymbols || [])
+            .filter(item => item !== key && item !== stock.symbol)].slice(0, 20);
+    });
     renderStocks();
 }
 
-function saveStockOrderFromDom() {
+async function togglePinnedStock(stock) {
+    const key = getStockKey(stock);
+    await SilverSettings.tryMutate(settings => {
+        const pinned = settings.pinnedSymbols || [];
+        settings.pinnedSymbols = pinned.includes(key) || pinned.includes(stock.symbol)
+            ? pinned.filter(item => item !== key && item !== stock.symbol) : [...pinned, key];
+    });
+    renderStocks();
+}
+
+async function saveStockOrderFromDom() {
     if (!draggedSymbol) return;
-    const settings = SilverSettings.load();
+    const moved = draggedSymbol;
     const visibleOrder = Array.from(dom.stockList.querySelectorAll(".stock-row"))
         .map(item => item.dataset.stockId).filter(Boolean);
-    const visibleKeys = new Set(visibleOrder);
-    const previousOrder = getOrderedStocks().map(getStockKey);
-    let visibleIndex = 0;
-    // Replace only visible slots so filtering never erases hidden stock settings.
-    const stockOrder = previousOrder.map(key =>
-        visibleKeys.has(key) ? visibleOrder[visibleIndex++] : key
-    );
-    if (stockOrder.every((key, index) => key === previousOrder[index])) return;
-    const manuallyOrderedStocks = [...new Set([
-        ...(settings.manuallyOrderedStocks ?? settings.stockOrder ?? []),
-        draggedSymbol
-    ])];
-    SilverSettings.tryUpdate({ stockOrder, manuallyOrderedStocks });
+    await SilverSettings.tryMutate(settings => {
+        const previousOrder = getOrderedStocks(settings).map(getStockKey);
+        const visible = visibleOrder.filter(key => previousOrder.includes(key));
+        const visibleKeys = new Set(visible);
+        let visibleIndex = 0;
+        const order = previousOrder.map(key => visibleKeys.has(key) ? visible[visibleIndex++] : key);
+        if (order.every((key, index) => key === previousOrder[index])) return false;
+        settings.manuallyOrderedStocks = [...new Set([
+            ...(settings.manuallyOrderedStocks ?? settings.stockOrder ?? []), moved
+        ])];
+        settings.stockOrder = order;
+    });
 }
 
 function renderStocks() {
+    // Preserve the actual dragged node until the drop order has been captured and saved.
+    if (draggedSymbol) return;
     const settings = SilverSettings.load();
     const pinned = settings.pinnedSymbols || [];
     const filterText = dom.stockFilterInput?.value.trim().toUpperCase() || "";
@@ -782,13 +792,20 @@ async function updateCurrentPrice(options = {}) {
     const symbol = stock.symbol;
     const revision = Number(stock.quoteRevision) || 0;
     const request = (quoteRequests.get(stockId) || 0) + 1;
+    const token = crypto.randomUUID();
     quoteRequests.set(stockId, request);
     const matchesRequest = current => current && isPriceConnected(current)
         && current.symbol === symbol && (Number(current.quoteRevision) || 0) === revision
-        && quoteRequests.get(stockId) === request;
+        && quoteRequests.get(stockId) === request && current.quoteRequestToken === token;
 
     try {
-        const result = await PriceProvider.getCurrentPrice(symbol, { force: options.force === true });
+        const started = await persistStockChange(latest => {
+            const current = latest.find(item => getStockKey(item) === stockId);
+            if (!current || current.symbol !== symbol || (Number(current.quoteRevision) || 0) !== revision) return false;
+            current.quoteRequestToken = token;
+        }, { silent: true });
+        if (!started) return;
+        const result = await PriceProvider.getCurrentPrice(symbol, { force: options.force === true, deferCache: true });
         const price = Number(result.price);
 
         if (Number.isFinite(price) && price > 0) {
@@ -805,7 +822,8 @@ async function updateCurrentPrice(options = {}) {
 
         const current = getStockById(stockId);
         if (!matchesRequest(current)) return;
-        setApiFailureCount(symbol, result.ok ? 0 : getApiFailureCount(symbol) + 1);
+        if (result.ok && result.updatedAt) await PriceProvider.saveCachedPrice(symbol, price, result.updatedAt);
+        await setApiFailureCount(symbol, result.ok ? 0 : getApiFailureCount(symbol) + 1);
         if (getStockKey(getStock()) === stockId) {
             refreshUI();
         }
@@ -821,8 +839,8 @@ async function updateCurrentPrice(options = {}) {
 function schedulePriceRefresh() {
     const stock = getStock();
     const settings = SilverSettings.load();
-    const target = [getStockKey(stock), stock?.symbol, stock?.connected, stock?.quoteRevision,
-        PriceProvider.getEffectiveApiKey()].join("|");
+    const target = [getStockKey(stock), stock?.symbol, stock?.connected, Number(stock?.quoteRevision) || 0,
+        PriceProvider.getEffectiveApiKey() || (PriceProvider.hasPriceAccess() ? "server" : "")].join("|");
     const interval = settings.apiRefreshIntervalMinutes;
     if (target === priceRefreshTarget && interval === priceRefreshInterval) return;
     priceRefreshTarget = target;
@@ -835,7 +853,7 @@ function schedulePriceRefresh() {
 
             return intervalMinutes * 60 * 1000;
         },
-        isEnabled: () => Boolean(PriceProvider.getEffectiveApiKey() && isPriceConnected(getStock()))
+        isEnabled: () => Boolean(PriceProvider.hasPriceAccess() && isPriceConnected(getStock()))
     });
 }
 
@@ -880,6 +898,7 @@ function openClonePositionModal(position) {
 }
 
 async function savePosition() {
+    const operation = modalOperation(dom.positionModal);
     const stockId = editingPositionStockId || getStockKey(getStock());
     const positionId = editingPositionId;
     const price = parseFormattedNumber(dom.buyPrice.value);
@@ -937,8 +956,9 @@ async function savePosition() {
             position.buyDate = date;
             position.memo = memo;
         }
-    }, { button: dom.savePositionBtn });
+    }, { button: dom.savePositionBtn, operationId: operation.operationId });
     if (!saved) return;
+    if (operation.session !== modalSessions.get(dom.positionModal) || operation.snapshot !== modalSnapshot(dom.positionModal)) return;
     resetPositionForm();
     closeModal(dom.positionModal);
     refreshUI();
@@ -1035,6 +1055,7 @@ function closeStockSettingsModal() {
 }
 
 async function saveStockSettings() {
+    const operation = modalOperation(dom.stockSettingsModal, JSON.stringify([settingsStockId, pendingQuoteConnection]));
     const stockId = settingsStockId;
     const connection = pendingQuoteConnection;
     const displayName = dom.stockDisplayName.value.trim();
@@ -1068,8 +1089,10 @@ async function saveStockSettings() {
                 stock.quoteRevision = (Number(stock.quoteRevision) || 0) + 1;
             }
         }
-    }, { button: dom.saveStockSettingsBtn });
+    }, { button: dom.saveStockSettingsBtn, operationId: operation.operationId });
     if (!saved) return;
+    if (operation.session !== modalSessions.get(dom.stockSettingsModal) || operation.snapshot !== modalSnapshot(dom.stockSettingsModal)) return;
+    if (operation.extra !== JSON.stringify([settingsStockId, pendingQuoteConnection])) return;
     closeStockSettingsModal();
     refreshUI();
 }
@@ -1181,6 +1204,7 @@ function openTradeModal(position, trade) {
 }
 
 async function saveTrade() {
+    const operation = modalOperation(dom.tradeModal);
     const price = parseFormattedNumber(dom.sellPrice.value);
     const qty = parseFormattedNumber(dom.sellQty.value);
 
@@ -1223,8 +1247,9 @@ async function saveTrade() {
             trade.price = price;
             trade.qty = qty;
         }
-    }, { button: dom.saveTradeBtn });
+    }, { button: dom.saveTradeBtn, operationId: operation.operationId });
     if (!saved) return;
+    if (operation.session !== modalSessions.get(dom.tradeModal) || operation.snapshot !== modalSnapshot(dom.tradeModal)) return;
     resetTradeForm();
     closeModal(dom.tradeModal);
     refreshUI();
@@ -1272,6 +1297,7 @@ function hideStockForm() {
 }
 
 async function addStockFromData({ symbol, name, exchange = "", memo = "" }) {
+    const operation = modalOperation(dom.stockForm, JSON.stringify([symbol, name, exchange, memo]));
     const normalizedSymbol = String(symbol || "").trim().toUpperCase();
     const displayName = String(name || normalizedSymbol).trim();
     const connected = Boolean(normalizedSymbol);
@@ -1300,16 +1326,18 @@ async function addStockFromData({ symbol, name, exchange = "", memo = "" }) {
             companyName: connected ? displayName : "",
             exchange: connected ? exchange : "",
             connected,
+            quoteRevision: 0,
+            quoteRequestToken: "",
             memo,
             currentPrice: null,
             positions: []
         });
-    }, { button: dom.saveStockBtn });
+    }, { button: dom.saveStockBtn, operationId: operation.operationId });
     if (!saved) return;
     selectedIndex = stocks.findIndex(stock => getStockKey(stock) === stockId);
     rememberRecentStock(stocks[selectedIndex]);
 
-    hideStockForm();
+    if (operation.session === modalSessions.get(dom.stockForm) && operation.snapshot === modalSnapshot(dom.stockForm)) hideStockForm();
     refreshUI();
 }
 
@@ -1360,7 +1388,17 @@ async function searchStocks() {
 }
 
 function bindEvents() {
-    window.addEventListener("silver-settings-changed", schedulePriceRefresh);
+    window.addEventListener("silver-settings-changed", () => {
+        SilverSettings.applyTheme(document);
+        renderStocks();
+        schedulePriceRefresh();
+    });
+    window.addEventListener("silver-server-changed", event => {
+        if (event.detail.key === "portfolioStocks") {
+            syncStocks(PortfolioStorage.loadStocks());
+            refreshUI();
+        }
+    });
     window.addEventListener("resize", hideStockContextMenu);
     document.addEventListener("scroll", event => {
         if (!event.target.closest?.(".context-menu")) hideStockContextMenu();
@@ -1437,11 +1475,10 @@ function bindEvents() {
         row.classList.add("dragging");
     });
 
-    dom.stockList.addEventListener("dragend", event => {
+    dom.stockList.addEventListener("dragend", async event => {
         event.target.closest(".stock-row")?.classList.remove("dragging");
-        saveStockOrderFromDom();
-        draggedSymbol = null;
-        renderStocks();
+        try { await saveStockOrderFromDom(); }
+        finally { draggedSymbol = null; renderStocks(); }
     });
 
     dom.stockList.addEventListener("dragover", event => {
@@ -1638,5 +1675,10 @@ function bindEvents() {
     });
 }
 
-bindEvents();
-refreshUI();
+async function startPortfolio() {
+    if (typeof ServerStore !== "undefined" && !await ServerStore.requireSession()) return;
+    stocks = PortfolioStorage.loadStocks();
+    bindEvents();
+    refreshUI();
+}
+startPortfolio();

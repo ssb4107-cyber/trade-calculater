@@ -1,0 +1,3 @@
+[functions.market-data]
+# Auth JWT is verified explicitly by auth.getUser(); supports publishable API keys.
+verify_jwt = false

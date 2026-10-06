@@ -1,5 +1,6 @@
 const Calculator = (() => {
     const HISTORY_KEY = "stockHistory";
+    const retryOperations = new Map();
     const state = {
         currency: "USD",
         changeSign: -1
@@ -148,16 +149,7 @@ const Calculator = (() => {
     }
 
     function readHistory() {
-        return SafeStorage.read(HISTORY_KEY, (history, damaged) => {
-            if (!Array.isArray(history)) throw new Error("Invalid history");
-            return history.filter(record => {
-                const valid = SafeStorage.isRecord(record) && SafeStorage.isNumeric(record.id)
-                    && SafeStorage.isNumeric(record.price) && Number(record.price) > 0
-                    && SafeStorage.isNumeric(record.pct) && Number(record.pct) > 0;
-                if (!valid) damaged();
-                return valid;
-            });
-        }, () => []);
+        return HistoryStorage.read();
     }
 
     function loadHistory() {
@@ -170,9 +162,9 @@ const Calculator = (() => {
         })[character]);
     }
 
-    function saveHistory(history) {
+    async function changeHistory(mutate, options) {
         try {
-            SafeStorage.write(HISTORY_KEY, history, readHistory());
+            await HistoryStorage.update(mutate, options);
             UIFeedback.showToast();
             return true;
         } catch (error) {
@@ -183,11 +175,16 @@ const Calculator = (() => {
         }
     }
 
-    function addHistory(record) {
-        const history = loadHistory();
-
-        history.unshift(record);
-        if (!saveHistory(history.slice(0, 8))) return false;
+    async function addHistory(record) {
+        const fingerprint = JSON.stringify([record.price, record.pct, record.currency]);
+        const operationId = retryOperations.get(fingerprint) || crypto.randomUUID();
+        retryOperations.set(fingerprint, operationId);
+        if (!await changeHistory(history => {
+            record.id = Math.max(Date.now(), ...history.map(item => item.id + 1));
+            history.unshift(record);
+            history.splice(8);
+        }, { operationId })) return false;
+        retryOperations.delete(fingerprint);
         renderHistory();
         return true;
     }
@@ -223,14 +220,20 @@ const Calculator = (() => {
         }
     }
 
-    function saveTarget(percent) {
+    async function saveTarget(percent) {
+        const originalInput = dom.basePrice.value;
+        const originalCurrency = state.currency;
         const price = parseInput(dom.basePrice.value);
 
         if (price <= 0) return;
 
         const targets = calculateTargets(price, percent);
+        const button = dom.targetTableBody.querySelector(`[data-percent="${percent}"]`);
+        if (button?.disabled) return;
+        if (button) button.disabled = true;
 
-        const saved = addHistory({
+        let saved;
+        try { saved = await addHistory({
             id: Date.now(),
             time: new Date().toLocaleTimeString("ko-KR", {
                 hour12: false,
@@ -242,8 +245,9 @@ const Calculator = (() => {
             buy: formatPrice(targets.buy),
             sell: formatPrice(targets.sell),
             currency: state.currency
-        });
+        }); } finally { if (button) button.disabled = false; }
         if (!saved) return;
+        if (dom.basePrice.value !== originalInput || state.currency !== originalCurrency) return;
 
         dom.basePrice.focus();
         dom.basePrice.select();
@@ -284,17 +288,19 @@ const Calculator = (() => {
         }).join("");
     }
 
-    function deleteHistory(id) {
-        const history = loadHistory().filter(record => record.id !== id);
-
-        if (!saveHistory(history)) return;
+    async function deleteHistory(id) {
+        if (!await changeHistory(history => {
+            const index = history.findIndex(record => record.id === id);
+            if (index === -1) return false;
+            history.splice(index, 1);
+        })) return;
         renderHistory();
     }
 
-    function clearHistory() {
+    async function clearHistory() {
         if (!confirm("최근 기록을 모두 삭제하시겠습니까?")) return;
 
-        if (!saveHistory([])) return;
+        if (!await changeHistory(history => { history.length = 0; })) return;
         renderHistory();
     }
 
@@ -422,11 +428,14 @@ const Calculator = (() => {
         });
     }
 
-    function init() {
+    async function init() {
+        if (typeof ServerStore !== "undefined" && !await ServerStore.requireSession()) return;
         SilverSettings.applyTheme(document);
         bindEvents();
         renderHistory();
         renderTargets();
+        window.addEventListener("storage", event => { if (event.key === HISTORY_KEY) renderHistory(); });
+        window.addEventListener("silver-server-changed", event => { if (event.detail.key === HISTORY_KEY) renderHistory(); });
     }
 
     return {

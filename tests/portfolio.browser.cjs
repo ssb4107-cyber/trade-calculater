@@ -212,6 +212,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
             PriceProvider.getCurrentPrice = () => new Promise(resolve => resolvers.push(resolve));
             const first = updateCurrentPrice();
             const second = updateCurrentPrice();
+            while (resolvers.length < 2) await new Promise(resolve => setTimeout(resolve, 10));
             resolvers[1]({ ok: true, price: 22 });
             await second;
             resolvers[0]({ ok: true, price: 11 });
@@ -462,6 +463,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         await page.locator("#positionModal").waitFor({ state: "hidden" });
         assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("portfolioStocks.recoveryBackup")).raw), original);
         await page.locator(".pin-stock-btn").click();
+        await page.waitForFunction(() => Boolean(localStorage.getItem("silverStrategySettings.recoveryBackup")));
         assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), true);
         assert.equal(await page.evaluate(() => Array.isArray(SilverSettings.load().stockOrder)), true);
         assert(await page.evaluate(() => Boolean(localStorage.getItem("silverStrategySettings.recoveryBackup"))));
@@ -492,11 +494,13 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         });
         await page.locator("#darkModeToggle").check();
         await page.locator("#saveSettingsBtn").click();
+        await page.waitForFunction(() => !document.getElementById("saveSettingsBtn").disabled);
         assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), false);
         assert((await page.locator("#settingsSavedText").textContent()).includes("저장하지 못했습니다"));
         assert.equal(await page.evaluate(() => document.documentElement.classList.contains("dark-mode")), false);
         await page.evaluate(() => Storage.prototype.setItem = window.restoreSetItem);
         await page.locator("#saveSettingsBtn").click();
+        await page.waitForFunction(() => SilverSettings.load().darkMode);
         assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), true);
     });
 
@@ -530,7 +534,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         await page.evaluate(async () => {
             window.quoteCalls = 0;
             PriceProvider.getCurrentPrice = async () => ({ ok: true, price: 25 + ++window.quoteCalls });
-            SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
+            await SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
             await addStockFromData({ name: "Connected", symbol: "NEW" });
         });
         await page.waitForFunction(() => getStock().currentPrice === 26);
@@ -544,7 +548,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         await page.evaluate(async () => {
             window.quoteCalls = 0;
             PriceProvider.getCurrentPrice = async () => ({ ok: true, price: 25 + ++window.quoteCalls });
-            SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
+            await SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
             openStockSettingsModal(getStock());
             pendingQuoteConnection = { symbol: "NEW", companyName: "NEW", exchange: "TEST" };
             await saveStockSettings();
@@ -559,13 +563,13 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
 
     await check("F11 API changes and switching stocks immediately update the selected quote", async () => {
         const { page } = await scenario([stock("A", { connected: true, symbol: "A" }), stock("B", { connected: true, symbol: "B" })]);
-        await page.evaluate(() => {
+        await page.evaluate(async () => {
             window.quoteCalls = [];
             PriceProvider.getCurrentPrice = async symbol => {
                 window.quoteCalls.push(symbol);
                 return { ok: true, price: symbol === "A" ? 11 : 22 };
             };
-            SilverSettings.tryUpdate({ finnhubApiKey: "TEST-1" });
+            await SilverSettings.tryUpdate({ finnhubApiKey: "TEST-1" });
         });
         await page.waitForFunction(() => getStock().currentPrice === 11);
         await page.locator('.stock-card[data-stock-id="B"]').click();
@@ -683,11 +687,11 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
     await check("F18 a hung quote times out, keeps the last price and resumes next interval", async () => {
         const { page } = await scenario([stock("A", { connected: true, symbol: "A", currentPrice: 25 })]);
         await page.clock.install();
-        await page.evaluate(() => {
+        await page.evaluate(async () => {
             window.requestCalls = 0;
             window.fetch = () => ++window.requestCalls === 1 ? new Promise(() => {})
                 : Promise.resolve({ ok: true, json: async () => ({ c: 30 }) });
-            SilverSettings.tryUpdate({ finnhubApiKey: "TEST", apiRefreshIntervalMinutes: 1,
+            await SilverSettings.tryUpdate({ finnhubApiKey: "TEST", apiRefreshIntervalMinutes: 1,
                 priceCacheBySymbol: { A: { price: 25, cachedAt: 0, updatedAt: "2026-10-06T00:00:00Z" } } });
         });
         await page.clock.runFor(15001);

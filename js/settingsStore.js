@@ -64,34 +64,40 @@ const SilverSettings = (() => {
         return next;
     }
 
-    function read() {
-        return SafeStorage.read(STORAGE_KEY, normalize, defaults);
+    function read(raw) {
+        return SafeStorage.read(STORAGE_KEY, normalize, defaults, defaults, raw);
     }
 
     function load() {
         return read().value;
     }
 
-    function save(settings) {
-        const nextSettings = normalize(settings, () => {});
-        SafeStorage.write(STORAGE_KEY, nextSettings, read());
+    function emit(nextSettings) {
         window.dispatchEvent(new CustomEvent("silver-settings-changed", {
             detail: nextSettings
         }));
 
-        return nextSettings;
+    }
+
+    async function mutate(change) {
+        const result = await SafeStorage.update(STORAGE_KEY, read, settings => {
+            const changed = change(settings);
+            if (changed === false) return false;
+            const normalized = normalize(settings, () => {});
+            Object.assign(settings, normalized);
+            if (typeof ServerStore !== "undefined" && ServerStore.enabled) settings.finnhubApiKey = "";
+        });
+        if (result.changed) emit(result.value);
+        return result.value;
     }
 
     function update(partialSettings) {
-        return save({
-            ...load(),
-            ...partialSettings
-        });
+        return mutate(settings => Object.assign(settings, partialSettings));
     }
 
-    function tryUpdate(partialSettings) {
+    async function tryMutate(change) {
         try {
-            return update(partialSettings);
+            return await mutate(change);
         } catch (error) {
             SafeStorage.notify(error.name === "StorageRecoveryRequired"
                 ? "손상된 설정 원본을 보호하고 있습니다. 복구 후 다시 저장해 주세요."
@@ -99,6 +105,12 @@ const SilverSettings = (() => {
             return null;
         }
     }
+
+    function tryUpdate(partialSettings) {
+        return tryMutate(settings => Object.assign(settings, partialSettings));
+    }
+
+    function save(settings) { return update(settings); }
 
     function applyTheme(targetDocument = document) {
         const settings = load();
@@ -117,6 +129,9 @@ const SilverSettings = (() => {
         save,
         update,
         tryUpdate,
-        applyTheme
+        tryMutate,
+        mutate,
+        applyTheme,
+        read
     };
 })();

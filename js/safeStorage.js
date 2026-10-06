@@ -14,11 +14,13 @@ const SafeStorage = (() => {
         if (typeof UIFeedback !== "undefined") UIFeedback.showToast(message);
     }
 
-    function read(key, normalize, initial, damagedFallback = initial) {
+    function read(key, normalize, initial, damagedFallback = initial, suppliedRaw) {
         let raw = null;
         const result = { value: null, raw, key, damaged: false, blocked: false };
         try {
-            raw = localStorage.getItem(key);
+            raw = suppliedRaw !== undefined ? suppliedRaw
+                : typeof ServerStore !== "undefined" && ServerStore.enabled
+                    ? ServerStore.readRaw(key) : localStorage.getItem(key);
             result.raw = raw;
             result.value = raw === null ? initial()
                 : normalize(JSON.parse(raw), () => { result.damaged = true; });
@@ -60,5 +62,61 @@ const SafeStorage = (() => {
         localStorage.setItem(key, JSON.stringify(value));
     }
 
-    return { isRecord, isNumeric, read, write, notify };
+    const pendingWrites = new Map();
+    function transaction(key, work) {
+        const previous = pendingWrites.get(key) || Promise.resolve();
+        const run = () => typeof navigator !== "undefined" && navigator.locks
+            ? navigator.locks.request(`silver-write:${key}`, work) : work();
+        const result = previous.then(run);
+        pendingWrites.set(key, result.catch(() => {}));
+        return result;
+    }
+
+    function update(key, reader, mutate, options = {}) {
+        return transaction(key, async () => {
+            const change = raw => {
+                const state = reader(raw);
+                const changed = mutate(state.value) !== false;
+                if (changed && state.blocked) {
+                    if (typeof ServerStore === "undefined" || !ServerStore.enabled) preserveOriginal(state);
+                    const error = new Error("손상된 원본을 보호하고 있습니다.");
+                    error.name = "StorageRecoveryRequired";
+                    throw error;
+                }
+                return { value: state.value, changed, backup: state.damaged ? state.raw : null, state };
+            };
+            if (typeof ServerStore !== "undefined" && ServerStore.enabled) {
+                return ServerStore.update(key, change, options);
+            }
+            const result = change(undefined);
+            if (result.changed) write(key, result.value, result.state);
+            return result;
+        });
+    }
+
+    // Repair ambiguous IDs deterministically, preserving valid IDs elsewhere in the list.
+    function uniqueIds(items, damaged, stringIds = false) {
+        const reserved = new Set(items.map(item => item.id));
+        const used = new Set();
+        let candidate = -1;
+        items.forEach((item, index) => {
+            const valid = stringIds ? typeof item.id === "string" && item.id.length > 0
+                : Number.isSafeInteger(item.id) && item.id !== 0;
+            if (!valid || used.has(item.id)) {
+                damaged();
+                if (stringIds) {
+                    let id = `recovered-stock-${index}`;
+                    while (reserved.has(id) || used.has(id)) id += "-r";
+                    item.id = id;
+                } else {
+                    while (reserved.has(candidate) || used.has(candidate)) candidate -= 1;
+                    item.id = candidate--;
+                }
+            }
+            used.add(item.id);
+        });
+        return items;
+    }
+
+    return { isRecord, isNumeric, read, write, notify, transaction, update, uniqueIds };
 })();
