@@ -1,6 +1,6 @@
 # Supabase 서버 적용 보고 — 2026-10-07
 
-무료 프로젝트 생성, 서버 저장 구조와 시세 함수의 실제 적용을 완료했습니다. 로그인 계정·회원가입 제한·사이트 주소·새 시세 키 설정과 운영 사이트 반영은 남아 있습니다.
+무료 프로젝트 생성, 서버 저장 구조와 시세 함수의 실제 적용을 완료했습니다. 이메일 확인이 완료된 계정 1개가 등록된 것을 확인했습니다. 사용자 선택에 따라 공개 회원가입 허용을 유지하며 설정 파일과 안내에도 반영했습니다. 사이트 주소·새 시세 키 설정 확인과 운영 사이트 반영은 남아 있습니다.
 
 ## 적용 결과
 
@@ -24,7 +24,7 @@
 - 오래된 버전의 저장 거절, 같은 요청의 중복 실행 방지와 최신 버전 갱신 확인.
 - 직접 테이블 수정과 익명 저장 함수 호출 차단, 보유 수량 초과 매도 거절 확인.
 - 세 문서의 일괄 이전과 정확한 원본 텍스트 백업, 계정별 시세 요청 제한 확인.
-- 임시 자료는 전체 롤백. 검사 후 사용자·문서·백업·요청 기록·시세 제한 행이 모두 0건임을 확인.
+- 임시 자료는 전체 롤백. 초기 검사 직후 사용자·문서·백업·요청 기록·시세 제한 행이 모두 0건임을 확인. 이후 실제 이용자 계정 1개의 등록과 이메일 확인 완료를 별도로 확인.
 - 실제 HTTP API에서 익명 문서·백업·저장 함수 접근이 차단됨을 확인.
 - 시세 함수의 로그인 누락·잘못된 토큰·잘못된 출처·잘못된 호출 방식 차단과 브라우저 사전 요청 응답 확인.
 - 실제 Auth 서버의 잘못된 로그인 거절과 화면의 한국어 안내 확인.
@@ -35,10 +35,10 @@
 
 현재 연결된 관리 기능이 Auth 계정·설정 변경과 서버 비밀키 등록을 지원하지 않아 다음 항목은 사용자 관리 화면 입력이 필요합니다.
 
-1. [로그인 설정](https://supabase.com/dashboard/project/pyerygphflowylaqtpht/auth/providers)에서 **Allow new users to sign up**을 끕니다. 실제 조회 결과 현재 공개 회원가입은 허용 상태입니다. 익명 로그인은 이미 꺼져 있고 이메일 로그인은 켜져 있습니다.
-2. [사용자](https://supabase.com/dashboard/project/pyerygphflowylaqtpht/auth/users)에서 **Add user → Create user**로 이용자 이메일·비밀번호를 등록하고 **Auto Confirm User**를 켭니다. 비밀번호를 채팅이나 저장소에 기록하지 않습니다.
-3. [사이트 주소](https://supabase.com/dashboard/project/pyerygphflowylaqtpht/auth/url-configuration)의 Site URL에 `https://ssb4107-cyber.github.io/trade-calculater/`를 저장합니다.
-4. [서버 비밀 값](https://supabase.com/dashboard/project/pyerygphflowylaqtpht/functions/secrets)에 새 Finnhub 키를 `FINNHUB_API_KEY`라는 이름으로 등록합니다. 기존 공개 키 폐기·재발급은 Finnhub 계정에서 처리해야 합니다. 새 키는 브라우저 코드나 SQL에 넣지 않습니다.
+회원가입 허용은 유지합니다. 익명 로그인은 꺼져 있고 이메일 로그인은 켜져 있습니다. 계정 1개는 등록 및 이메일 확인을 완료했습니다. 추가 이용자가 필요하면 [사용자](https://supabase.com/dashboard/project/pyerygphflowylaqtpht/auth/users)에서 **Add user → Create user**로 생성하고 **Auto Confirm User**를 켭니다. 비밀번호를 채팅이나 저장소에 기록하지 않습니다. 현재 앱에 회원가입 버튼은 없습니다.
+
+1. [사이트 주소](https://supabase.com/dashboard/project/pyerygphflowylaqtpht/auth/url-configuration)의 Site URL에 `https://ssb4107-cyber.github.io/trade-calculater/`를 저장합니다.
+2. [서버 비밀 값](https://supabase.com/dashboard/project/pyerygphflowylaqtpht/functions/secrets)에 새 Finnhub 키를 `FINNHUB_API_KEY`라는 이름으로 등록합니다. 기존 공개 키 폐기·재발급은 Finnhub 계정에서 처리해야 합니다. 새 키는 브라우저 코드나 SQL에 넣지 않습니다.
 
 계정 등록과 시세 설정을 확인한 뒤 운영 사이트에 반영하고 실제 사용자 로그인·자료 이전·시세 조회를 확인합니다. Supabase 프로젝트 생성과 운영 사이트 전환은 서로 다른 단계입니다.
 

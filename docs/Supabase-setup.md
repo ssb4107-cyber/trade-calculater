@@ -1,6 +1,6 @@
 # Supabase 적용 안내
 
-현재 상태(2026-10-07): Free 프로젝트 `trade-calculater`를 서울 리전에 생성했고, 데이터베이스 변경 2건과 `market-data` 서버 함수를 실제 적용했습니다. `js/backendConfig.js`에는 공개 URL과 publishable key를 입력했습니다. 실제 데이터베이스 권한·계정 분리·충돌 방지·자료 이전과 익명 HTTP 접근 차단 검증을 통과했습니다. 공개 회원가입 제한, 이용자 계정 생성, 사이트 주소와 새 시세 비밀키 등록은 관리 화면 입력을 기다리고 있으며 운영 브랜치에는 아직 반영하지 않았습니다.
+현재 상태(2026-10-07): Free 프로젝트 `trade-calculater`를 서울 리전에 생성했고, 데이터베이스 변경 2건과 `market-data` 서버 함수를 실제 적용했습니다. `js/backendConfig.js`에는 공개 URL과 publishable key를 입력했습니다. 실제 데이터베이스 권한·계정 분리·충돌 방지·자료 이전과 익명 HTTP 접근 차단 검증을 통과했습니다. 사용자 선택에 따라 공개 회원가입을 허용 상태로 유지합니다. 이메일 확인이 완료된 계정 1개가 등록된 것을 확인했습니다. 사이트 주소와 새 시세 비밀키 설정 확인이 남아 있으며 운영 브랜치에는 아직 반영하지 않았습니다.
 
 프로젝트: [Supabase 관리 화면](https://supabase.com/dashboard/project/pyerygphflowylaqtpht). API URL: `https://pyerygphflowylaqtpht.supabase.co`. 실제 적용 결과와 남은 항목은 [서버 적용 보고](Supabase-deployment-2026-10-07.md)에 정리했습니다.
 
@@ -8,7 +8,7 @@
 
 1. 사용자 계정의 조직에 `trade-calculater`라는 **Free** 프로젝트를 생성합니다. 요금제를 변경하지 않습니다.
 2. `supabase/migrations`의 SQL 파일을 파일명 순서대로 적용합니다. 첫 파일에는 사용자 자료 테이블, 복구 백업, 충돌 방지 저장 함수와 사용자별 읽기 권한이 포함됩니다. 후속 파일은 권한이 높은 내부 함수를 Data API에 노출하지 않는 `silver_private` 스키마로 옮기며, 공개 함수는 호출자의 권한으로 이 함수를 호출합니다. 백업과 저장 요청의 사용자별 조회 인덱스도 추가합니다.
-3. Auth에서 공개 회원 가입을 비활성화합니다. 관리자 화면에서 이용자 3~4명의 이메일/비밀번호 계정을 생성하고 이메일을 확인 완료로 등록합니다. 이 방식에는 로그인 때 이메일을 발송하는 과정이 없습니다. 비밀번호는 채팅이나 저장소에 기록하지 않습니다.
+3. Auth에서 공개 회원가입을 허용 상태로 유지하고 익명 로그인은 비활성화합니다. 현재 앱에는 로그인만 구현되어 있으므로 관리자 화면에서 이용자의 이메일/비밀번호 계정을 생성하고 이메일을 확인 완료로 등록합니다. 이 방식에는 로그인 때 이메일을 발송하는 과정이 없습니다. 회원가입 허용 여부와 관계없이 자료 접근은 계정별로 제한됩니다. 비밀번호는 채팅이나 저장소에 기록하지 않습니다.
 4. `market-data` Edge Function을 배포합니다. `supabase/config.toml`의 `verify_jwt = false` 설정을 사용하며 함수 내부의 `auth.getUser()`가 모든 시세 요청을 검증합니다. 프로젝트 인증에 최신 `SUPABASE_PUBLISHABLE_KEYS`의 기본 키를 우선 사용하고 기존 공개 키에도 호환됩니다. 브라우저의 publishable key만으로 시세 함수에 접근할 수 없습니다.
 5. 공개된 기존 Finnhub 키를 공급자 관리 화면에서 폐기하고 새 키를 발급합니다. 새 `FINNHUB_API_KEY`는 Supabase의 Edge Function Secrets 화면에 직접 등록합니다. 새 키를 채팅, 코드, SQL, PR 본문에 넣지 않습니다. 기본 허용 출처는 `https://ssb4107-cyber.github.io`입니다. 필요한 경우 `ALLOWED_ORIGINS`를 쉼표로 구분한 정확한 출처 목록으로 등록합니다.
 6. 프로젝트의 공개 URL과 **publishable key**만 `js/backendConfig.js`에 입력합니다. secret key 또는 service_role key는 사용하지 않습니다.
@@ -39,7 +39,7 @@ supabase functions deploy market-data --project-ref <project-ref> --use-api
 supabase db query --project-ref <project-ref> --file supabase/checks/server-storage.sql
 ```
 
-`config.toml`에는 사이트 주소, 공개 회원가입/익명 로그인 제한, 시세 함수의 인증 방식만 선언합니다. `config diff` 결과를 확인한 뒤 적용합니다. 저장 권한 점검 SQL은 사용자 자료를 읽거나 변경하지 않습니다. 실제 두 계정 로그인·저장·시세 확인은 별도로 수행해야 합니다.
+`config.toml`에는 사이트 주소, 공개 회원가입 허용, 익명 로그인 제한, 시세 함수의 인증 방식만 선언합니다. `config diff` 결과를 확인한 뒤 적용합니다. 저장 권한 점검 SQL은 사용자 자료를 읽거나 변경하지 않습니다. 실제 두 계정 로그인·저장·시세 확인은 별도로 수행해야 합니다.
 
 ## 사용 방식
 
