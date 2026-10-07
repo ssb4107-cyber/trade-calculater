@@ -19,7 +19,15 @@
             <div class="form-group"><label for="loginEmail">이메일</label><input id="loginEmail" type="email" autocomplete="username" required></div>
             <div class="form-group"><label for="loginPassword">비밀번호</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
             <button id="loginButton" class="btn-primary" type="submit">로그인</button>
-            <p class="auth-help">계정 발급과 비밀번호 변경은 관리자에게 요청해 주세요.</p>
+            <button id="showSignupButton" class="btn-secondary" type="button">회원가입</button>
+        </form>
+        <form id="signupForm" hidden>
+            <h2>회원가입</h2>
+            <div class="form-group"><label for="signupEmail">이메일</label><input id="signupEmail" type="email" autocomplete="username" required></div>
+            <div class="form-group"><label for="signupPassword">비밀번호</label><input id="signupPassword" type="password" autocomplete="new-password" minlength="8" aria-describedby="signupPasswordHelp" required><small id="signupPasswordHelp" class="auth-help">8자 이상 입력해 주세요.</small></div>
+            <div class="form-group"><label for="signupPasswordConfirm">비밀번호 확인</label><input id="signupPasswordConfirm" type="password" autocomplete="new-password" minlength="8" required></div>
+            <button id="signupButton" class="btn-primary" type="submit">가입하기</button>
+            <button id="showLoginButton" class="btn-secondary" type="button">로그인으로 돌아가기</button>
         </form>
         <div id="migrationPanel" hidden>
             <h2>이 컴퓨터의 기존 자료</h2>

@@ -7,6 +7,7 @@ enable_anonymous_sign_ins = false
 
 [auth.email]
 enable_signup = true
+enable_confirmations = false
 
 [functions.market-data]
 # Auth JWT is verified explicitly by auth.getUser(); supports publishable API keys.
