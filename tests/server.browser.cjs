@@ -11,17 +11,28 @@ const accounts = { "a@example.test": "11111111-1111-4111-8111-111111111111", "b@
 const documents = new Map(), mutations = new Map(), backups = [];
 const contexts = [], errors = [];
 let browser, base, failWrites = false, failAfterCommit = false, dropResponses = 0, conflicts = 0;
+let signupRequests = 0, confirmSignup = false;
 const jwt = email => [Buffer.from('{"alg":"HS256","typ":"JWT"}').toString("base64url"),
     Buffer.from(JSON.stringify({ sub: accounts[email], email, role: "authenticated", exp: Math.floor(Date.now()/1000)+3600 })).toString("base64url"), "test-signature"].join(".");
 const owner = req => {
     try { return JSON.parse(Buffer.from(req.headers.authorization.split(" ")[1].split(".")[1], "base64url")).sub; } catch { return null; }
 };
-function reply(res, status, data) { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); }
+function reply(res, status, data) { res.writeHead(status, { "Content-Type": "application/json", "X-Supabase-Api-Version": "2024-01-01" }); res.end(JSON.stringify(data)); }
 const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://localhost");
     if (url.pathname.startsWith("/backend/")) {
         let body = ""; for await (const chunk of req) body += chunk;
         const input = body ? JSON.parse(body) : {};
+        if (url.pathname.endsWith("/auth/v1/signup")) {
+            signupRequests++;
+            await new Promise(resolve => setTimeout(resolve, 150));
+            if (input.email === "rate@example.test") return reply(res, 429, { code: "over_request_rate_limit", msg: "Too many requests" });
+            if (accounts[input.email]) return reply(res, 422, { code: "user_already_exists", msg: "Already registered" });
+            const id = randomUUID(); accounts[input.email] = id;
+            const user = { id, email: input.email, aud: "authenticated", role: "authenticated" };
+            if (confirmSignup) return reply(res, 200, user);
+            return reply(res, 200, { access_token: jwt(input.email), refresh_token: "refresh-test", expires_in: 3600, token_type: "bearer", user });
+        }
         if (url.pathname.endsWith("/auth/v1/token")) {
             const email = input.email || "a@example.test";
             if (!accounts[email] || input.password && input.password !== "test-password") return reply(res, 400, { error: "invalid_grant", error_description: "Invalid credentials" });
@@ -91,10 +102,15 @@ async function login(page, email = "a@example.test") {
     await page.locator("#loginEmail").fill(email); await page.locator("#loginPassword").fill("test-password");
     await page.locator("#loginButton").click();
 }
+async function fillSignup(page, email, password = "test-password", confirmation = password) {
+    await page.locator("#signupEmail").fill(email);
+    await page.locator("#signupPassword").fill(password);
+    await page.locator("#signupPasswordConfirm").fill(confirmation);
+}
 async function portfolio(page) {
     await page.waitForFunction(() => document.getElementById("pageFrame")?.contentWindow?.location.pathname.endsWith("/pages/portfolio.html"));
     const child = page.frames().find(frame => frame.url().endsWith("/pages/portfolio.html"));
-    await child.waitForFunction(() => typeof getStock === "function" && document.getElementById("stockTitle").textContent !== "");
+    await child.locator(".stock-row").first().waitFor({ state: "visible" });
     return child;
 }
 (async () => {
@@ -162,8 +178,68 @@ async function portfolio(page) {
     assert.equal(await first.locator("#appLayout").isVisible(), false);
     await login(first, "b@example.test"); await first.locator("#authPanel").waitFor({ state: "hidden" });
     assert.equal(await (await portfolio(first)).evaluate(() => getStockById("A")), null);
+
+    const member = await computer();
+    assert.equal(await member.locator("#signupForm").isVisible(), false);
+    await member.locator("#loginEmail").fill("member@example.test");
+    await member.locator("#showSignupButton").click();
+    assert.equal(await member.locator("#loginForm").isVisible(), false);
+    assert.equal(await member.locator("#signupEmail").inputValue(), "member@example.test");
+    await fillSignup(member, "member@example.test", "test-password", "different-password");
+    await member.locator("#signupButton").click();
+    await member.waitForFunction(() => document.getElementById("authMessage").textContent.includes("일치하지"));
+    assert.equal(signupRequests, 0, "Mismatched passwords must not create an account");
+    await fillSignup(member, "member@example.test", "short");
+    await member.locator("#signupButton").click();
+    assert.equal(await member.locator("#signupPassword").evaluate(field => field.validity.tooShort), true);
+    assert.equal(signupRequests, 0, "Short passwords must not create an account");
+    await fillSignup(member, "a@example.test"); await member.locator("#signupButton").click();
+    await member.waitForFunction(() => document.getElementById("authMessage").textContent.includes("이미 가입"));
+    assert.equal(await member.locator("#signupForm").isVisible(), true);
+    assert.equal(await member.locator("#signupEmail").inputValue(), "a@example.test");
+    assert.equal(await member.locator("#signupPassword").inputValue(), "test-password");
+    await fillSignup(member, "rate@example.test"); await member.locator("#signupButton").click();
+    await member.waitForFunction(() => document.getElementById("authMessage").textContent.includes("요청이 많"));
+    assert.equal(await member.locator("#signupButton").isEnabled(), true);
+    const beforeSignup = signupRequests;
+    await fillSignup(member, "member@example.test");
+    await member.evaluate(() => { document.getElementById("signupForm").requestSubmit(); document.getElementById("signupForm").requestSubmit(); });
+    assert.equal(await member.locator("#showLoginButton").isDisabled(), true);
+    await member.locator("#authPanel").waitFor({ state: "hidden" });
+    const memberPortfolio = await portfolio(member);
+    assert.equal(signupRequests, beforeSignup + 1, "Repeated submission must create only one account");
+    assert.equal(await member.locator("#accountText").textContent(), "member@example.test");
+    assert.equal(await member.locator("#signupPassword").inputValue(), "");
+    assert.equal(await memberPortfolio.evaluate(() => getStockById("A")), null);
+    await member.reload(); await portfolio(member);
+    assert.equal(await member.locator("#authPanel").isVisible(), false, "A new member's session must survive reload");
+    await member.locator("#logoutButton").click(); await member.locator("#loginForm").waitFor({ state: "visible" });
+
+    confirmSignup = true;
+    await member.locator("#showSignupButton").click(); await fillSignup(member, "confirm@example.test");
+    await member.locator("#signupButton").click();
+    await member.waitForFunction(() => document.getElementById("authMessage").textContent.includes("확인 이메일"));
+    assert.equal(await member.locator("#loginForm").isVisible(), true);
+    assert.equal(await member.locator("#appLayout").isVisible(), false);
+    assert.equal(await member.locator("#loginEmail").inputValue(), "confirm@example.test");
+    assert.equal(await member.locator("#signupPassword").inputValue(), "");
+    assert.equal(await member.locator("#loginButton").isEnabled(), true);
+    confirmSignup = false;
+    await member.locator("#showSignupButton").click();
+    await member.setViewportSize({ width: 600, height: 300 });
+    await member.locator("#signupButton").scrollIntoViewIfNeeded();
+    const signupBounds = await member.locator("#signupButton").boundingBox();
+    assert.ok(signupBounds.y >= 0 && signupBounds.y + signupBounds.height <= 301, "Signup remains reachable in short windows");
+    if (process.env.TEST_SCREENSHOT_DIR) {
+        await member.setViewportSize({ width: 1280, height: 900 });
+        await member.screenshot({ path: path.join(process.env.TEST_SCREENSHOT_DIR, "signup.png") });
+    }
+    await member.locator("#showLoginButton").click();
+    assert.equal(await member.locator("#signupForm").isVisible(), false);
+    assert.equal(await member.locator("#loginEmail").inputValue(), "confirm@example.test");
     assert.deepEqual(errors, []);
     console.log("PASS Supabase SDK login/error/session/logout, account switch, migration and original backup, cross-computer CAS, no local business writes, failed-save draft retention and idempotent retry");
+    console.log("PASS self-service signup, password confirmation/length, duplicate/rate-limit guidance, single submission, immediate account session/restore, confirmation fallback and short-window access");
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
     for (const context of contexts) await context.close(); if (browser) await browser.close(); server.close();
 });

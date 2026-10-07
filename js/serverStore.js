@@ -114,6 +114,27 @@ const ServerStore = (() => {
         return ready;
     }
 
+    async function signUp(email, password) {
+        const { data, error } = await getClient().auth.signUp({ email, password });
+        if (error) {
+            const messages = {
+                signup_disabled: "현재 회원가입이 중단되어 있습니다.",
+                user_already_exists: "이미 가입된 이메일입니다. 로그인해 주세요.",
+                email_address_invalid: "올바른 이메일 주소를 입력해 주세요.",
+                weak_password: "더 길고 복잡한 비밀번호를 입력해 주세요.",
+                over_email_send_rate_limit: "요청이 많습니다. 잠시 후 다시 시도해 주세요.",
+                over_request_rate_limit: "요청이 많습니다. 잠시 후 다시 시도해 주세요.",
+                email_address_not_authorized: "가입 확인 메일을 보내지 못했습니다. 이메일 발송 설정을 확인해 주세요."
+            };
+            throw new Error(messages[error.code] || "회원가입하지 못했습니다. 입력 내용을 확인하고 다시 시도해 주세요.");
+        }
+        if (!data.session) return null;
+        generation += 1;
+        cache.clear();
+        ready = hydrate(data.session);
+        return ready;
+    }
+
     async function signOut() {
         const { error } = await getClient().auth.signOut({ scope: "local" });
         if (error) throw new Error("로그아웃하지 못했습니다. 다시 시도해 주세요.");
@@ -213,6 +234,6 @@ const ServerStore = (() => {
     window.addEventListener("focus", () => { if (session) refresh().catch(() => {}); });
     window.addEventListener("pagehide", () => clearTimeout(timer));
     window.addEventListener("pageshow", () => { if (session) schedulePoll(); });
-    return { enabled, initialize, signIn, signOut, requireSession, readRaw, update, market,
+    return { enabled, initialize, signIn, signUp, signOut, requireSession, readRaw, update, market,
         localImport, importLocal, downloadLocalBackup, hasDocument: key => cache.has(key) };
 })();
