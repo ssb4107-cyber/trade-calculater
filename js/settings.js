@@ -13,11 +13,14 @@ function loadSettingsForm() {
     SilverSettings.applyTheme(document);
 }
 
-function saveSettingsForm() {
-    const saved = SilverSettings.tryUpdate({
+async function saveSettingsForm() {
+    if (settingsDom.saveSettingsBtn.disabled) return;
+    settingsDom.saveSettingsBtn.disabled = true;
+    const saved = await SilverSettings.tryUpdate({
         darkMode: settingsDom.darkModeToggle.checked,
         apiRefreshIntervalMinutes: Number(settingsDom.apiRefreshInterval.value) || 5
     });
+    settingsDom.saveSettingsBtn.disabled = false;
     if (!saved) {
         settingsDom.settingsSavedText.textContent = "저장하지 못했습니다. 다시 시도해 주세요.";
         return;
@@ -38,5 +41,9 @@ function saveSettingsForm() {
     }, 1800);
 }
 
-settingsDom.saveSettingsBtn.addEventListener("click", saveSettingsForm);
-loadSettingsForm();
+async function startSettings() {
+    if (typeof ServerStore !== "undefined" && !await ServerStore.requireSession()) return;
+    settingsDom.saveSettingsBtn.addEventListener("click", saveSettingsForm);
+    loadSettingsForm();
+}
+startSettings();

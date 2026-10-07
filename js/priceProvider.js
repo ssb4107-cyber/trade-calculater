@@ -40,24 +40,23 @@
         return localCached;
     }
 
-    function saveCachedPrice(symbol, price, updatedAt) {
+    function hasPriceAccess() {
+        return typeof ServerStore !== "undefined" && ServerStore.enabled || Boolean(getEffectiveApiKey());
+    }
+
+    async function saveCachedPrice(symbol, price, updatedAt) {
         const normalizedSymbol = String(symbol || "").trim().toUpperCase();
-        const settings = SilverSettings.load();
         const cacheItem = {
             price,
             updatedAt,
             cachedAt: Date.now()
         };
 
-        const saved = SilverSettings.tryUpdate({
-            priceUpdatedAtBySymbol: {
-                ...(settings.priceUpdatedAtBySymbol || {}),
-                [normalizedSymbol]: updatedAt
-            },
-            priceCacheBySymbol: {
-                ...(settings.priceCacheBySymbol || {}),
-                [normalizedSymbol]: cacheItem
-            }
+        const saved = await SilverSettings.tryMutate(settings => {
+            const previous = settings.priceCacheBySymbol[normalizedSymbol];
+            if (previous && Date.parse(previous.updatedAt) > Date.parse(updatedAt)) return false;
+            settings.priceUpdatedAtBySymbol[normalizedSymbol] = updatedAt;
+            settings.priceCacheBySymbol[normalizedSymbol] = cacheItem;
         });
         return Boolean(saved);
     }
@@ -149,7 +148,7 @@
             };
         }
 
-        if (!apiKey) {
+        if (!hasPriceAccess()) {
             return {
                 ok: false,
                 status: "API_KEY_REQUIRED",
@@ -161,7 +160,9 @@
         }
 
         try {
-            const data = await fetchJson(
+            const requestedAt = new Date().toISOString();
+            const data = typeof ServerStore !== "undefined" && ServerStore.enabled
+                ? await ServerStore.market({ action: "quote", symbol: normalizedSymbol }) : await fetchJson(
                 `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(normalizedSymbol)}&token=${encodeURIComponent(apiKey)}`
             );
             const price = Number(data.c);
@@ -170,8 +171,8 @@
                 throw new Error("가격 데이터가 비어 있습니다.");
             }
 
-            const updatedAt = new Date().toISOString();
-            const cacheSaved = saveCachedPrice(normalizedSymbol, price, updatedAt);
+            const updatedAt = requestedAt;
+            const cacheSaved = options.deferCache ? false : await saveCachedPrice(normalizedSymbol, price, updatedAt);
 
             return {
                 ok: true,
@@ -207,12 +208,13 @@
             return cachedSearch.results;
         }
 
-        if (!apiKey || !normalizedQuery) {
+        if (!hasPriceAccess() || !normalizedQuery) {
             return relatedResults;
         }
 
         try {
-            const data = await fetchJson(
+            const data = typeof ServerStore !== "undefined" && ServerStore.enabled
+                ? await ServerStore.market({ action: "search", query: normalizedQuery }) : await fetchJson(
                 `https://finnhub.io/api/v1/search?q=${encodeURIComponent(normalizedQuery)}&token=${encodeURIComponent(apiKey)}`
             );
 
@@ -241,6 +243,8 @@
 
     return {
         getEffectiveApiKey,
+        hasPriceAccess,
+        saveCachedPrice,
         getCachedPrice,
         getCurrentPrice,
         searchStocks

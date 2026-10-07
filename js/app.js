@@ -42,11 +42,9 @@ menus.forEach(menu => {
     });
 });
 
-sidebarToggle.addEventListener("click", () => {
-    const settings = SilverSettings.load();
-
-    SilverSettings.tryUpdate({
-        sidebarCollapsed: !settings.sidebarCollapsed
+sidebarToggle.addEventListener("click", async () => {
+    await SilverSettings.tryMutate(settings => {
+        settings.sidebarCollapsed = !settings.sidebarCollapsed;
     });
 
     applyAppSettings();
@@ -54,6 +52,7 @@ sidebarToggle.addEventListener("click", () => {
 
 frame.addEventListener("load", applyAppSettings);
 window.addEventListener("silver-settings-changed", applyAppSettings);
+window.addEventListener("storage", event => { if (event.key === "silverStrategySettings") applyAppSettings(); });
 window.addEventListener("message", event => {
     if (event.data?.type === "silver-settings-updated") {
         applyAppSettings();

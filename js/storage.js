@@ -44,6 +44,7 @@ const PortfolioStorage = (() => {
             damaged();
             return null;
         }
+        if (trade.type !== undefined && trade.type !== "SELL") { damaged(); return null; }
         return {
             id: number(trade.id, -(index + 1), damaged) || -(index + 1),
             type: text(trade.type, "SELL", damaged),
@@ -69,6 +70,12 @@ const PortfolioStorage = (() => {
             : [];
         // A broken sale makes the remaining quantity unknowable. Keep its raw position in the backup.
         if (trades.includes(null)) return null;
+        SafeStorage.uniqueIds(trades, damaged);
+        const soldQty = trades.reduce((sum, trade) => sum + trade.qty, 0);
+        if (!Number.isFinite(soldQty) || soldQty - buyQty > Number.EPSILON * Math.max(buyQty, soldQty) * 8) {
+            damaged();
+            return null;
+        }
         if (position.tags !== undefined && !Array.isArray(position.tags)) damaged();
         const tags = (Array.isArray(position.tags) ? position.tags : []).filter(tag => {
             if (typeof tag === "string") return true;
@@ -110,50 +117,34 @@ const PortfolioStorage = (() => {
             exchange: text(stock.exchange, "", damaged),
             connected,
             quoteRevision: number(stock.quoteRevision, 0, damaged),
+            quoteRequestToken: text(stock.quoteRequestToken, "", damaged),
             currentPrice: number(stock.currentPrice, null, damaged),
             memo: text(stock.memo, "", damaged),
             positions: Array.isArray(stock.positions)
-                ? stock.positions.map((position, positionIndex) => normalizePosition(position, positionIndex, damaged)).filter(Boolean)
+                ? SafeStorage.uniqueIds(stock.positions.map((position, positionIndex) => normalizePosition(position, positionIndex, damaged)).filter(Boolean), damaged)
                 : []
         };
     }
 
-    function read() {
+    function read(raw) {
         return SafeStorage.read(STORAGE_KEY, (saved, damaged) => {
             if (!Array.isArray(saved)) throw new Error("Invalid portfolio");
-            return saved.map((stock, index) => normalizeStock(stock, index, damaged)).filter(Boolean);
-        }, () => clone(defaultStocks), () => []);
+            return SafeStorage.uniqueIds(saved.map((stock, index) => normalizeStock(stock, index, damaged)).filter(Boolean), damaged, true);
+        }, () => clone(defaultStocks), () => [], raw);
     }
 
     function loadStocks() {
         return read().value;
     }
 
-    let pendingWrite = Promise.resolve();
-
-    function updateStocks(update) {
-        const commit = () => {
-            // Read inside the lock: another tab may have saved since this page loaded.
-            const state = read();
-            const latest = state.value;
-            const changed = update(latest) !== false;
-
-            if (changed) {
-                SafeStorage.write(STORAGE_KEY, latest, state);
-            }
-
-            return { stocks: latest, changed };
-        };
-        const run = () => typeof navigator !== "undefined" && navigator.locks
-            ? navigator.locks.request(STORAGE_KEY, commit)
-            : commit();
-        const result = pendingWrite.then(run);
-        pendingWrite = result.catch(() => {});
-        return result;
+    function updateStocks(update, options) {
+        return SafeStorage.update(STORAGE_KEY, read, update, options)
+            .then(result => ({ stocks: result.value, changed: result.changed }));
     }
 
     return {
         loadStocks,
-        updateStocks
+        updateStocks,
+        read
     };
 })();

@@ -28,6 +28,7 @@ const server = http.createServer((req, res) => {
         // Never serve the repository's real API key during tests.
         res.end(file.endsWith("appConfig.js")
             ? 'const SilverAppConfig = { DEFAULT_FINNHUB_API_KEY: "" };'
+            : file.endsWith("backendConfig.js") ? 'const SilverBackendConfig = {};'
             : fs.readFileSync(file));
     } catch { res.writeHead(404); res.end(); }
 });
@@ -212,6 +213,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
             PriceProvider.getCurrentPrice = () => new Promise(resolve => resolvers.push(resolve));
             const first = updateCurrentPrice();
             const second = updateCurrentPrice();
+            while (resolvers.length < 2) await new Promise(resolve => setTimeout(resolve, 10));
             resolvers[1]({ ok: true, price: 22 });
             await second;
             resolvers[0]({ ok: true, price: 11 });
@@ -276,8 +278,14 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
     });
 
     await check("F04 concurrent sales validate latest quantity before committing", async () => {
-        const { page, open, alerts } = await scenario([stock("A", { positions: [position(1)] })]);
+        const { page, open } = await scenario([stock("A", { positions: [position(1)] })]);
         const second = await open();
+        // Background-tab native dialogs can be suppressed by Chromium. Record
+        // the application's warning call, while verifying real form/save state.
+        for (const target of [page, second]) await target.evaluate(() => {
+            window.recordedSaleAlerts = [];
+            window.alert = message => window.recordedSaleAlerts.push(String(message));
+        });
         const sellDraft = page => page.evaluate(async () => {
             openTradeModal(getStock().positions[0]);
             dom.sellPrice.value = "12";
@@ -288,7 +296,9 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         const item = (await saved(page))[0].positions[0];
         assert.equal(item.trades.length, 1);
         assert.equal(item.remainQty, 0.25);
-        assert(alerts.some(message => message.includes("보유수량을 초과")));
+        const alerts = (await Promise.all([page, second].map(target => target.evaluate(() => window.recordedSaleAlerts)))).flat();
+        assert(alerts.some(message => message.includes("보유수량을 초과")), JSON.stringify({ alerts }));
+        assert.equal((await Promise.all([page, second].map(target => target.locator("#tradeModal").isVisible()))).filter(Boolean).length, 1);
     });
 
     await check("F04 concurrent valid sales both survive with unique trade ids", async () => {
@@ -415,6 +425,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         const context = await browser.newContext();
         contexts.push(context);
         await context.route("https://**/*", route => route.abort());
+        await context.route("**/backendConfig.js", route => route.fulfill({ contentType: "text/javascript", body: "const SilverBackendConfig = {};" }));
         const page = await context.newPage();
         await page.goto(pathToFileURL(path.join(root, "pages/calculator.html")).href);
         assert.equal(await page.evaluate(() => Boolean(navigator.locks)), true);
@@ -462,6 +473,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         await page.locator("#positionModal").waitFor({ state: "hidden" });
         assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("portfolioStocks.recoveryBackup")).raw), original);
         await page.locator(".pin-stock-btn").click();
+        await page.waitForFunction(() => Boolean(localStorage.getItem("silverStrategySettings.recoveryBackup")));
         assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), true);
         assert.equal(await page.evaluate(() => Array.isArray(SilverSettings.load().stockOrder)), true);
         assert(await page.evaluate(() => Boolean(localStorage.getItem("silverStrategySettings.recoveryBackup"))));
@@ -492,11 +504,13 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         });
         await page.locator("#darkModeToggle").check();
         await page.locator("#saveSettingsBtn").click();
+        await page.waitForFunction(() => !document.getElementById("saveSettingsBtn").disabled);
         assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), false);
         assert((await page.locator("#settingsSavedText").textContent()).includes("저장하지 못했습니다"));
         assert.equal(await page.evaluate(() => document.documentElement.classList.contains("dark-mode")), false);
         await page.evaluate(() => Storage.prototype.setItem = window.restoreSetItem);
         await page.locator("#saveSettingsBtn").click();
+        await page.waitForFunction(() => SilverSettings.load().darkMode);
         assert.equal(await page.evaluate(() => SilverSettings.load().darkMode), true);
     });
 
@@ -530,7 +544,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         await page.evaluate(async () => {
             window.quoteCalls = 0;
             PriceProvider.getCurrentPrice = async () => ({ ok: true, price: 25 + ++window.quoteCalls });
-            SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
+            await SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
             await addStockFromData({ name: "Connected", symbol: "NEW" });
         });
         await page.waitForFunction(() => getStock().currentPrice === 26);
@@ -544,7 +558,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
         await page.evaluate(async () => {
             window.quoteCalls = 0;
             PriceProvider.getCurrentPrice = async () => ({ ok: true, price: 25 + ++window.quoteCalls });
-            SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
+            await SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
             openStockSettingsModal(getStock());
             pendingQuoteConnection = { symbol: "NEW", companyName: "NEW", exchange: "TEST" };
             await saveStockSettings();
@@ -559,13 +573,13 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
 
     await check("F11 API changes and switching stocks immediately update the selected quote", async () => {
         const { page } = await scenario([stock("A", { connected: true, symbol: "A" }), stock("B", { connected: true, symbol: "B" })]);
-        await page.evaluate(() => {
+        await page.evaluate(async () => {
             window.quoteCalls = [];
             PriceProvider.getCurrentPrice = async symbol => {
                 window.quoteCalls.push(symbol);
                 return { ok: true, price: symbol === "A" ? 11 : 22 };
             };
-            SilverSettings.tryUpdate({ finnhubApiKey: "TEST-1" });
+            await SilverSettings.tryUpdate({ finnhubApiKey: "TEST-1" });
         });
         await page.waitForFunction(() => getStock().currentPrice === 11);
         await page.locator('.stock-card[data-stock-id="B"]').click();
@@ -683,11 +697,11 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
     await check("F18 a hung quote times out, keeps the last price and resumes next interval", async () => {
         const { page } = await scenario([stock("A", { connected: true, symbol: "A", currentPrice: 25 })]);
         await page.clock.install();
-        await page.evaluate(() => {
+        await page.evaluate(async () => {
             window.requestCalls = 0;
             window.fetch = () => ++window.requestCalls === 1 ? new Promise(() => {})
                 : Promise.resolve({ ok: true, json: async () => ({ c: 30 }) });
-            SilverSettings.tryUpdate({ finnhubApiKey: "TEST", apiRefreshIntervalMinutes: 1,
+            await SilverSettings.tryUpdate({ finnhubApiKey: "TEST", apiRefreshIntervalMinutes: 1,
                 priceCacheBySymbol: { A: { price: 25, cachedAt: 0, updatedAt: "2026-10-06T00:00:00Z" } } });
         });
         await page.clock.runFor(15001);

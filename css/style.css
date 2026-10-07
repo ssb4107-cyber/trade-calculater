@@ -1377,6 +1377,37 @@ nav{
     overflow:visible;
 }
 
+[hidden]{display:none !important;}
+.auth-panel{height:100dvh;overflow:auto;padding:24px;display:grid;place-items:center;}
+.auth-card{width:min(100%,460px);padding:28px;display:flex;flex-direction:column;gap:18px;}
+.auth-card p{color:var(--muted);line-height:1.6;}
+.auth-card form{display:flex;flex-direction:column;gap:18px;}
+.auth-help{font-size:13px;}
+.account-area{padding:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.account-area small{overflow-wrap:anywhere;}
+.account-area:has(#logoutButton[hidden]){display:none;}
+.sidebar-collapsed .account-area small{display:none;}
+.compact-layout .account-area{padding:0 12px 8px;font-size:12px;}
+
+/* Short landscape screens and magnified displays scroll the entire portfolio. */
+html.fixed-page.compact-layout.short-layout,
+.compact-layout.short-layout .portfolio-body{
+    height:auto;
+    min-height:100%;
+    overflow:auto;
+}
+.compact-layout.short-layout .portfolio-layout{
+    height:auto;
+    min-height:100dvh;
+}
+.compact-layout.short-layout .portfolio-content{
+    flex:0 0 auto;
+    overflow:visible;
+}
+.compact-layout .sidebar-collapsed .logo-text{
+    display:none;
+}
+
 @container portfolio (max-width: 660px){
     .portfolio-header,
     .trade-item{

@@ -8,9 +8,10 @@
     } catch {
         // A standalone or cross-origin page uses its own viewport.
     }
-    const updateLayout = () => document.documentElement.classList.toggle(
-        "compact-layout", viewportWindow.innerWidth < 768
-    );
+    const updateLayout = () => {
+        document.documentElement.classList.toggle("compact-layout", viewportWindow.innerWidth < 768);
+        document.documentElement.classList.toggle("short-layout", viewportWindow.innerHeight < 480);
+    };
     const attach = () => {
         viewportWindow.addEventListener("resize", updateLayout);
         updateLayout();

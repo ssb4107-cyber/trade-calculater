@@ -11,7 +11,31 @@
 
 <body>
 
-<div class="layout" id="appLayout">
+<section class="auth-panel" id="authPanel" hidden>
+    <div class="panel auth-card">
+        <h1>실버 전략 매니저</h1>
+        <p>로그인하면 다른 컴퓨터에서도 같은 자료를 사용할 수 있습니다.</p>
+        <form id="loginForm">
+            <div class="form-group"><label for="loginEmail">이메일</label><input id="loginEmail" type="email" autocomplete="username" required></div>
+            <div class="form-group"><label for="loginPassword">비밀번호</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+            <button id="loginButton" class="btn-primary" type="submit">로그인</button>
+            <p class="auth-help">계정 발급과 비밀번호 변경은 관리자에게 요청해 주세요.</p>
+        </form>
+        <div id="migrationPanel" hidden>
+            <h2>이 컴퓨터의 기존 자료</h2>
+            <p id="migrationSummary"></p>
+            <div class="button-row">
+                <button id="importLocalButton" class="btn-primary" type="button">내 계정으로 자료 옮기기</button>
+                <button id="skipImportButton" class="btn-secondary" type="button">새로 시작</button>
+                <button id="downloadLocalButton" class="btn-secondary" type="button">원본 백업 받기</button>
+            </div>
+            <p class="auth-help">이 컴퓨터의 원본은 삭제하지 않습니다.</p>
+        </div>
+        <p id="authMessage" class="save-state" role="status" aria-live="polite"></p>
+    </div>
+</section>
+
+<div class="layout" id="appLayout" hidden>
 
     <aside class="sidebar app-sidebar" id="appSidebar">
 
@@ -48,12 +72,16 @@
             </button>
         </nav>
 
+        <div class="account-area">
+            <small id="accountText"></small>
+            <button id="logoutButton" class="btn-secondary" type="button" hidden>로그아웃</button>
+        </div>
+
     </aside>
 
     <main class="content app-content">
         <iframe
             id="pageFrame"
-            src="pages/portfolio.html"
             title="실버 전략 매니저 화면">
         </iframe>
     </main>
@@ -61,10 +89,16 @@
 </div>
 
 <script src="js/appConfig.js"></script>
+<script src="js/backendConfig.js"></script>
+<script src="js/vendor/supabase.js"></script>
+<script src="js/serverStore.js"></script>
 <script src="js/safeStorage.js"></script>
 <script src="js/settingsStore.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/historyStore.js"></script>
 <script src="js/uiFeedback.js"></script>
 <script src="js/app.js"></script>
+<script src="js/auth.js"></script>
 
 </body>
 </html>
