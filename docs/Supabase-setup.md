@@ -1,6 +1,6 @@
 # Supabase 적용 안내
 
-현재 상태(2026-10-07): Free 프로젝트 `trade-calculater`를 서울 리전에 생성했고, 데이터베이스 변경 2건과 `market-data` 서버 함수를 실제 적용했습니다. `js/backendConfig.js`에는 공개 URL과 publishable key를 입력했습니다. 실제 데이터베이스 권한·계정 분리·충돌 방지·자료 이전과 익명 HTTP 접근 차단 검증을 통과했습니다. 사용자 선택에 따라 공개 회원가입을 허용 상태로 유지합니다. 이메일 확인이 완료된 계정 1개가 등록된 것을 확인했습니다. 사이트 주소와 새 시세 비밀키 설정 확인이 남아 있으며 운영 브랜치에는 아직 반영하지 않았습니다.
+현재 상태(2026-10-07): Free 프로젝트 `trade-calculater`를 서울 리전에 생성했고, 데이터베이스 변경 2건과 `market-data` 서버 함수를 실제 적용했습니다. `js/backendConfig.js`에는 공개 URL과 publishable key를 입력했습니다. 실제 데이터베이스 권한·계정 분리·충돌 방지·자료 이전과 익명 HTTP 접근 차단 검증을 통과했습니다. 사용자 선택에 따라 공개 회원가입을 허용 상태로 유지합니다. 이메일 확인이 완료된 계정 1개가 등록된 것을 확인했고, 사이트 주소·시세 키 설정은 사용자에게 완료 답변을 받았습니다. 운영 브랜치 반영과 GitHub Pages 배포를 완료했으며 실제 사이트의 로그인 화면·로그인 실패 안내·보호된 페이지 접근 차단을 검증했습니다. 실제 이용자 계정으로 로그인·자료 저장·시세 조회에 성공하는지 확인하는 것은 첫 사용 시 진행합니다.
 
 프로젝트: [Supabase 관리 화면](https://supabase.com/dashboard/project/pyerygphflowylaqtpht). API URL: `https://pyerygphflowylaqtpht.supabase.co`. 실제 적용 결과와 남은 항목은 [서버 적용 보고](Supabase-deployment-2026-10-07.md)에 정리했습니다.
 
@@ -12,7 +12,7 @@
 4. `market-data` Edge Function을 배포합니다. `supabase/config.toml`의 `verify_jwt = false` 설정을 사용하며 함수 내부의 `auth.getUser()`가 모든 시세 요청을 검증합니다. 프로젝트 인증에 최신 `SUPABASE_PUBLISHABLE_KEYS`의 기본 키를 우선 사용하고 기존 공개 키에도 호환됩니다. 브라우저의 publishable key만으로 시세 함수에 접근할 수 없습니다.
 5. 공개된 기존 Finnhub 키를 공급자 관리 화면에서 폐기하고 새 키를 발급합니다. 새 `FINNHUB_API_KEY`는 Supabase의 Edge Function Secrets 화면에 직접 등록합니다. 새 키를 채팅, 코드, SQL, PR 본문에 넣지 않습니다. 기본 허용 출처는 `https://ssb4107-cyber.github.io`입니다. 필요한 경우 `ALLOWED_ORIGINS`를 쉼표로 구분한 정확한 출처 목록으로 등록합니다.
 6. 프로젝트의 공개 URL과 **publishable key**만 `js/backendConfig.js`에 입력합니다. secret key 또는 service_role key는 사용하지 않습니다.
-7. 실제 프로젝트에서 두 계정 간 접근 차단, 같은 계정의 서로 다른 컴퓨터 저장, 로그아웃/계정 전환, 시세 요청, 자료 이전을 검증한 뒤 GitHub Pages 운영 브랜치에 반영합니다.
+7. 실제 프로젝트의 계정별 저장 권한과 익명 접근 차단, 통제된 SDK 브라우저 환경의 저장 충돌·자료 이전·로그아웃/계정 전환을 검증한 뒤 GitHub Pages 운영 브랜치에 반영합니다. 배포 후 실제 이용자 계정으로 로그인·다른 컴퓨터의 저장·시세 요청·자료 이전을 확인합니다.
 
 ## 공식 관리 프로그램으로 연결하는 경우
 
