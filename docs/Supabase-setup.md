@@ -1,5 +1,7 @@
 # Supabase 적용 안내
 
+추가 적용(2026-10-07): 전체 재점검 P2 7건을 개선하고 `20261007104227_account_snapshots.sql`을 서버에 적용했습니다. **설정 → 자료 백업·복원**에서 최신 서버 자료 다운로드, 서버 백업 보관과 복원을 사용할 수 있습니다. 일별 첫 변경 전 자동 백업, 복원 직전 백업, 계정별 접근 제한과 복원 충돌·중복 방지를 검증했습니다. 사용 방법과 남은 개선 항목은 [P2 개선 결과](P2-improvements-2026-10-07.md)를 확인하세요.
+
 현재 상태(2026-10-07): Free 프로젝트 `trade-calculater`를 서울 리전에 생성했고, 데이터베이스 변경 2건과 `market-data` 서버 함수를 실제 적용했습니다. `js/backendConfig.js`에는 공개 URL과 publishable key를 입력했습니다. 실제 데이터베이스 권한·계정 분리·충돌 방지·자료 이전과 익명 HTTP 접근 차단 검증을 통과했습니다. 사용자 선택에 따라 공개 회원가입을 허용 상태로 유지합니다. 이메일 확인이 완료된 계정 1개가 등록된 것을 확인했고, 사이트 주소·시세 키 설정은 사용자에게 완료 답변을 받았습니다. 운영 브랜치 반영과 GitHub Pages 배포를 완료했으며 실제 사이트의 로그인 화면·로그인 실패 안내·보호된 페이지 접근 차단을 검증했습니다. 실제 이용자 계정으로 로그인·자료 저장·시세 조회에 성공하는지 확인하는 것은 첫 사용 시 진행합니다.
 
 프로젝트: [Supabase 관리 화면](https://supabase.com/dashboard/project/pyerygphflowylaqtpht). API URL: `https://pyerygphflowylaqtpht.supabase.co`. 실제 적용 결과와 남은 항목은 [서버 적용 보고](Supabase-deployment-2026-10-07.md)에 정리했습니다.
@@ -65,11 +67,14 @@ node tests/p2.browser.cjs
 node tests/server.browser.cjs
 node tests/server.sql.cjs
 node tests/server.public.cjs
+node tests/audit-p2.browser.cjs
 ```
 
 브라우저 검증에는 Playwright와 Edge가 필요합니다. PostgreSQL 검증에는 임시 검증 환경의 `@electric-sql/pglite`가 필요합니다. `server.browser.cjs`는 공식 Supabase SDK와 통제된 Auth/PostgREST 응답을 사용하며, 실제 Supabase 계정/프로젝트 검증을 대신하지 않습니다. `server.sql.cjs`는 실제 PostgreSQL 엔진에서 마이그레이션과 RLS 권한을 실행합니다. `server.public.cjs`는 실제 배포된 서버의 익명 접근 차단과 로그인 설정 상태만 확인하며, 계정을 만들거나 이메일을 발송하지 않습니다.
 
 `supabase/checks/server-isolation.sql`은 실제 서버에서도 실행했습니다. 검사에 필요한 임시 Auth 식별자와 문서는 하나의 트랜잭션 안에서만 생성하고 전체를 롤백합니다. 두 계정의 데이터베이스 권한과 저장 함수는 검증하지만 실제 비밀번호 로그인이나 다른 컴퓨터의 브라우저 세션 검증을 대신하지 않습니다.
+
+`supabase/checks/account-snapshots.sql`도 같은 방식으로 실제 서버의 백업 권한·계정 분리·일별 보관·복원 충돌·중복 방지·복원 전 자료 보관을 검증하고 롤백했습니다. `audit-p2.browser.cjs`는 실제 이용자 계정을 사용하지 않는 통제된 SDK 브라우저 검증입니다.
 
 회원가입 수정본은 실제 Supabase에 연결한 별도 브라우저 환경에서 임시 계정으로 검증했습니다. 가입 직후 자동 로그인, 실제 포트폴리오·고정 설정 저장, 서로 분리된 두 브라우저 세션의 같은 계정 로그인/복원과 인증된 Finnhub 시세 조회에 성공했습니다. 검증 후 로그아웃하고 임시 계정·자료·요청 기록을 정리해 모두 0건임을 확인했습니다. 기존 이용자 계정은 유지했습니다. 비밀번호·토큰·시세 키는 검증 기록에 저장하지 않았습니다.
 

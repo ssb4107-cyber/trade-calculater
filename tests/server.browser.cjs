@@ -10,6 +10,13 @@ const { randomUUID } = require("node:crypto");
 const accounts = { "a@example.test": "11111111-1111-4111-8111-111111111111", "b@example.test": "22222222-2222-4222-8222-222222222222" };
 const documents = new Map(), mutations = new Map(), backups = [];
 const contexts = [], errors = [];
+const snapshots = [];
+function snapshot(uid, reason = "manual") {
+    const value = { portfolioStocks: [], silverStrategySettings: {}, stockHistory: [],
+        ...Object.fromEntries([...(documents.get(uid) || new Map())].map(([key, row]) => [key, row.value])) };
+    const row = { id: String(snapshots.length + 1), owner: uid, reason, created_at: new Date().toISOString(), documents: structuredClone(value) };
+    snapshots.push(row); return row;
+}
 let browser, base, failWrites = false, failAfterCommit = false, dropResponses = 0, conflicts = 0;
 let signupRequests = 0, confirmSignup = false;
 const jwt = email => [Buffer.from('{"alg":"HS256","typ":"JWT"}').toString("base64url"),
@@ -46,6 +53,22 @@ const server = http.createServer(async (req, res) => {
         if (name === "silver_read_all") return reply(res, 200, [...rows.values()]);
         if (name === "silver_read_document") return reply(res, 200, rows.get(input.p_key) || null);
         if (name === "silver_read_operation") return reply(res, 200, mutations.get(uid + input.p_mutation) || null);
+        if (name === "silver_list_snapshots") return reply(res, 200, snapshots.filter(row => row.owner === uid).slice().reverse().map(({ id, reason, created_at }) => ({ id, reason, created_at })));
+        if (name === "silver_create_snapshot") return reply(res, 200, snapshot(uid));
+        if (name === "silver_read_snapshot") return reply(res, 200, snapshots.find(row => row.owner === uid && row.id === String(input.p_id))?.documents || null);
+        if (name === "silver_restore_documents") {
+            if (input.p_owner !== uid) return reply(res, 403, { code: "42501" });
+            if (failWrites) return reply(res, 503, { message: "Simulated offline" });
+            const mutationKey = uid + input.p_mutation;
+            if (mutations.has(mutationKey)) return reply(res, 200, mutations.get(mutationKey));
+            if (Object.keys(input.p_values).some(key => (rows.get(key)?.version || 0) !== input.p_versions[key])) return reply(res, 200, { restored: false });
+            const prior = snapshot(uid, "before_restore");
+            for (const [key, value] of Object.entries(input.p_values)) rows.set(key, { owner_id: uid, key, value, version: (rows.get(key)?.version || 0) + 1 });
+            const result = { restored: true, documents: [...rows.values()], before_snapshot: prior };
+            mutations.set(mutationKey, result);
+            if (dropResponses > 0) { dropResponses--; res.destroy(); return; }
+            return reply(res, 200, result);
+        }
         if (name === "market-data") return reply(res, 200, input.action === "quote" ? { c: 25 } : { result: [] });
         if (name === "silver_write_document") {
             if (failWrites) return reply(res, 503, { message: "Simulated offline" });
@@ -113,7 +136,25 @@ async function portfolio(page) {
     await child.locator(".stock-row").first().waitFor({ state: "visible" });
     return child;
 }
-(async () => {
+module.exports = {
+    async start() {
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve)); base = `http://127.0.0.1:${server.address().port}`;
+        browser = await chromium.launch({ headless: true, channel: "msedge" });
+        return { browser, base };
+    },
+    async close() { for (const context of contexts) await context.close(); if (browser) await browser.close(); server.close(); },
+    computer, login, portfolio, accounts, documents, mutations, snapshots, errors,
+    addAccount(email, values = {}) {
+        const id = randomUUID(); accounts[email] = id;
+        documents.set(id, new Map(Object.entries(values).map(([key, value]) => [key, { owner_id: id, key, value, version: 1 }])));
+        return id;
+    },
+    controls(options) {
+        if ("failWrites" in options) failWrites = options.failWrites;
+        if ("dropResponses" in options) dropResponses = options.dropResponses;
+    }
+};
+if (require.main === module) (async () => {
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve)); base = `http://127.0.0.1:${server.address().port}`;
     browser = await chromium.launch({ headless: true, channel: "msedge" });
     const seed = { portfolioStocks: [{ id: "A", displayName: "A", symbol: "", connected: false, positions: [] }, { id: "B", displayName: "B", symbol: "", connected: false, positions: [] }],

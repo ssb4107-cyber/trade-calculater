@@ -33,15 +33,10 @@ function getPositionUnrealized(position, stock = getSelectedStock()) {
 }
 
 function getPositionRate(position) {
-    const buyPrice = toNumber(position.buyPrice);
-
-    if (buyPrice === 0) return 0;
-    if (toNumber(position.remainQty) === 0) {
-        const cost = buyPrice * toNumber(position.buyQty);
-        return cost === 0 ? 0 : toNumber(position.realizedPnL) / cost * 100;
-    }
-    const price = getCurrentPrice();
-    return price === null ? null : (price - buyPrice) / buyPrice * 100;
+    const cost = toNumber(position.buyPrice) * toNumber(position.buyQty);
+    if (cost === 0) return 0;
+    const profit = getPositionTotalPnL(position);
+    return profit === null ? null : profit / cost * 100;
 }
 
 function getPositionTotalPnL(position) {

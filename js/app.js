@@ -2,6 +2,9 @@ const frame = document.getElementById("pageFrame");
 const menus = document.querySelectorAll(".menu");
 const appLayout = document.getElementById("appLayout");
 const sidebarToggle = document.getElementById("sidebarToggle");
+const pageDrafts = new Map();
+window.SilverPageDrafts = { read: page => pageDrafts.get(page) };
+window.addEventListener("silver-signed-out", () => pageDrafts.clear());
 
 const pages = {
     portfolio: "pages/portfolio.html",
@@ -34,6 +37,12 @@ menus.forEach(menu => {
         const page = menu.dataset.page;
 
         if (!frame || !pages[page]) return;
+        if (frame.getAttribute("src") === pages[page]) return;
+        try {
+            const previous = Object.keys(pages).find(key => frame.getAttribute("src") === pages[key]);
+            const state = frame.contentWindow?.SilverPageState;
+            if (previous && state?.page === previous) pageDrafts.set(previous, state.capture());
+        } catch { /* A page that has not finished loading has no draft. */ }
 
         menus.forEach(item => item.classList.remove("active"));
         menu.classList.add("active");
@@ -54,6 +63,10 @@ frame.addEventListener("load", applyAppSettings);
 window.addEventListener("silver-settings-changed", applyAppSettings);
 window.addEventListener("storage", event => { if (event.key === "silverStrategySettings") applyAppSettings(); });
 window.addEventListener("message", event => {
+    if (event.origin === window.location.origin && event.source === frame.contentWindow && event.data?.type === "silver-data-restored") {
+        pageDrafts.clear();
+        if (ServerStore.enabled) ServerStore.reload().then(applyAppSettings).catch(() => {});
+    }
     if (event.data?.type === "silver-settings-updated") {
         applyAppSettings();
     }

@@ -15,11 +15,21 @@ async function request(route, options = {}) {
 }
 (async () => {
     assert.ok(config.url && config.publishableKey.startsWith("sb_publishable_"), "Configure a deployed project with a publishable key");
-    for (const route of ["/rest/v1/silver_documents?select=key", "/rest/v1/silver_recovery_backups?select=id"]) {
+    for (const route of ["/rest/v1/silver_documents?select=key", "/rest/v1/silver_recovery_backups?select=id", "/rest/v1/silver_snapshots?select=id"]) {
         assert.ok([401, 403].includes((await request(route)).status), "Anonymous table access must be denied");
     }
     const read = await request("/rest/v1/rpc/silver_read_all", { method: "POST", body: "{}" });
     assert.ok([401, 403].includes(read.status), "Anonymous RPC must be denied");
+    for (const [name, params] of [
+        ["silver_list_snapshots", {}], ["silver_read_snapshot", { p_id: 1 }], ["silver_create_snapshot", {}],
+        ["silver_restore_documents", { p_values: { portfolioStocks: [], silverStrategySettings: {}, stockHistory: [] },
+            p_versions: { portfolioStocks: 0, silverStrategySettings: 0, stockHistory: 0 },
+            p_mutation: "ab92d44e-4275-44fd-b88a-880b271c93c4", p_owner: "8043b66c-a7b9-440e-92dd-6aa557375dd5" }]
+    ]) {
+        assert.ok([401, 403].includes((await request("/rest/v1/rpc/" + name, {
+            method: "POST", body: JSON.stringify(params)
+        })).status), "Anonymous snapshot RPC must be denied: " + name);
+    }
     console.log("PASS deployed anonymous table and RPC access denied");
 
     const route = "/functions/v1/market-data";

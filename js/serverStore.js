@@ -156,6 +156,49 @@ const ServerStore = (() => {
         return row ? JSON.stringify(row.value) : null;
     }
 
+    async function readAccountData() {
+        if (!await initialize() || !session) throw new Error("로그인이 필요합니다.");
+        const expectedGeneration = generation;
+        const rows = await rpc("silver_read_all", {});
+        if (generation !== expectedGeneration || !session) throw new Error("로그인 상태가 변경되었습니다.");
+        const values = { portfolioStocks: [], silverStrategySettings: {}, stockHistory: [] };
+        const versions = Object.fromEntries(keys.map(key => [key, 0]));
+        for (const row of rows) {
+            if (!keys.includes(row.key)) continue;
+            accept(row, expectedGeneration);
+            values[row.key] = row.value;
+            versions[row.key] = row.version;
+        }
+        return { values, versions };
+    }
+
+    async function snapshotRequest(name, args = {}) {
+        if (!await initialize() || !session) throw new Error("로그인이 필요합니다.");
+        const expectedGeneration = generation;
+        const result = await rpc(name, args);
+        if (generation !== expectedGeneration || !session) throw new Error("로그인 상태가 변경되었습니다.");
+        return result;
+    }
+
+    async function restoreDocuments(values, versions, operationId) {
+        if (!await initialize() || !session) throw new Error("로그인이 필요합니다.");
+        const expectedGeneration = generation;
+        const args = { p_values: values, p_versions: versions, p_mutation: operationId, p_owner: session.user.id };
+        let result;
+        try { result = await rpc("silver_restore_documents", args); }
+        catch { result = await rpc("silver_restore_documents", args); }
+        if (generation !== expectedGeneration || !session) throw new Error("로그인 상태가 변경되었습니다.");
+        if (!result?.restored) {
+            const issue = new Error("다른 화면에서 자료가 변경됐습니다. 최신 자료를 확인한 뒤 복원 내용을 다시 확인해 주세요.");
+            issue.code = "RESTORE_CONFLICT";
+            throw issue;
+        }
+        for (const row of result.documents) accept(row, expectedGeneration);
+        window.dispatchEvent(new CustomEvent("silver-data-restored"));
+        if (window.parent !== window) window.parent.postMessage({ type: "silver-data-restored" }, window.location.origin);
+        return result;
+    }
+
     async function update(key, change, options = {}) {
         if (!keys.includes(key) || !await initialize() || !session) throw new Error("로그인이 필요합니다.");
         const expectedGeneration = generation;
@@ -194,23 +237,37 @@ const ServerStore = (() => {
     async function market(body) {
         if (!await initialize()) throw new Error("로그인이 필요합니다.");
         const { data, error } = await getClient().functions.invoke("market-data", { body });
-        if (error) throw new Error("시세 서버에 연결하지 못했습니다.");
+        if (error) {
+            const status = error.context?.status;
+            const issue = new Error(status === 429 ? "요청이 많습니다. 잠시 후 다시 검색하거나 갱신해 주세요."
+                : status === 401 ? "로그인이 만료되었습니다. 다시 로그인해 주세요."
+                : status === 503 ? "시세 서비스가 준비되지 않았습니다. 잠시 후 다시 시도해 주세요."
+                : "시세 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            issue.code = status === 429 ? "RATE_LIMITED" : status === 401 ? "AUTH_REQUIRED" : "MARKET_UNAVAILABLE";
+            issue.retryAfter = status === 429 ? Number(error.context?.headers?.get("Retry-After")) || 60 : 0;
+            throw issue;
+        }
         return data;
     }
 
     function localImport() {
-        const raw = Object.fromEntries(keys.map(key => [key, localStorage.getItem(key)]));
+        let unavailable = false;
+        const raw = Object.fromEntries(keys.map(key => {
+            try { return [key, localStorage.getItem(key)]; }
+            catch { unavailable = true; return [key, null]; }
+        }));
         const readers = { portfolioStocks: PortfolioStorage.read, silverStrategySettings: SilverSettings.read,
             stockHistory: HistoryStorage.read };
         const states = Object.fromEntries(keys.map(key => [key, readers[key](raw[key])]));
         const value = Object.fromEntries(keys.map(key => [key, states[key].value]));
         value.silverStrategySettings.finnhubApiKey = "";
-        return { raw, states, value, exists: keys.some(key => raw[key] !== null),
+        return { raw, states, value, unavailable, exists: keys.some(key => raw[key] !== null),
             damaged: keys.some(key => states[key].damaged), blocked: keys.some(key => states[key].blocked) };
     }
 
     async function importLocal() {
         const source = localImport();
+        if (source.unavailable) throw new Error("브라우저에서 기존 자료를 읽지 못했습니다. 저장소 접근 설정을 확인해 주세요.");
         if (source.blocked) throw new Error("읽지 못한 원본 자료가 있습니다. 먼저 백업 파일을 내려받아 주세요.");
         if (!session) throw new Error("로그인이 필요합니다.");
         const expectedGeneration = generation;
@@ -223,6 +280,7 @@ const ServerStore = (() => {
 
     function downloadLocalBackup() {
         const source = localImport();
+        if (source.unavailable) throw new Error("브라우저에서 기존 자료를 읽지 못해 백업할 수 없습니다.");
         const blob = new Blob([JSON.stringify({ savedAt: new Date().toISOString(), original: source.raw }, null, 2)], { type: "application/json" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
@@ -235,5 +293,9 @@ const ServerStore = (() => {
     window.addEventListener("pagehide", () => clearTimeout(timer));
     window.addEventListener("pageshow", () => { if (session) schedulePoll(); });
     return { enabled, initialize, signIn, signUp, signOut, requireSession, readRaw, update, market,
-        localImport, importLocal, downloadLocalBackup, hasDocument: key => cache.has(key) };
+        localImport, importLocal, downloadLocalBackup, hasDocument: key => cache.has(key), hasDocuments: () => cache.size > 0,
+        readAccountData, restoreDocuments, reload: refresh,
+        listSnapshots: () => snapshotRequest("silver_list_snapshots"),
+        createSnapshot: () => snapshotRequest("silver_create_snapshot"),
+        readSnapshot: id => snapshotRequest("silver_read_snapshot", { p_id: id }) };
 })();

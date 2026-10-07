@@ -618,7 +618,7 @@ function renderPositionCard(position) {
                         <span class="info-value">${formatMoney(getPositionTotalPnL(position))}</span>
                     </div>
                     <div class="info-item">
-                        <span class="info-label">수익률</span>
+                        <span class="info-label">총 수익률</span>
                         <span class="info-value">${formatRate(getPositionRate(position))}</span>
                     </div>
                     <div class="tag-list">
@@ -826,6 +826,7 @@ async function updateCurrentPrice(options = {}) {
         await setApiFailureCount(symbol, result.ok ? 0 : getApiFailureCount(symbol) + 1);
         if (getStockKey(getStock()) === stockId) {
             refreshUI();
+            if (!result.ok) renderPriceStatus(current, result.status === "RATE_LIMITED" ? "WAIT" : "ERROR", result.message);
         }
     } finally {
         pendingQuoteCount -= 1;
@@ -1129,18 +1130,18 @@ async function searchQuoteConnections() {
 
     dom.quoteSearchResults.innerHTML = `<div class="empty-state small">검색 중입니다.</div>`;
 
-    const results = await PriceProvider.searchStocks(query);
+    let results, warning = "";
+    try { results = await PriceProvider.searchStocks(query); }
+    catch (error) { results = error.results || []; warning = error.message; }
     if (request !== quoteSearchGeneration || dom.quoteSearchInput.value.trim() !== query
         || settingsStockId !== stockId || dom.quoteConnectionModal.getAttribute("aria-hidden") !== "false") return;
 
     if (results.length === 0) {
-        dom.quoteSearchResults.innerHTML = `
-            <div class="empty-state small">검색 결과가 없습니다.</div>
-        `;
+        dom.quoteSearchResults.innerHTML = `<div class="empty-state small" role="status">${escapeHtml(warning || "검색 결과가 없습니다.")}</div>`;
         return;
     }
 
-    dom.quoteSearchResults.innerHTML = results.map(result => `
+    dom.quoteSearchResults.innerHTML = (warning ? `<div class="empty-state small" role="status">${escapeHtml(warning)}</div>` : "") + results.map(result => `
         <button
             class="stock-result"
             type="button"
@@ -1360,20 +1361,22 @@ async function searchStocks() {
 
     dom.stockSearchResults.innerHTML = `<div class="empty-state small">검색 중입니다.</div>`;
 
-    const results = await PriceProvider.searchStocks(query);
+    let results, warning = "";
+    try { results = await PriceProvider.searchStocks(query); }
+    catch (error) { results = error.results || []; warning = error.message; }
     if (request !== stockSearchGeneration || dom.stockSearchInput.value.trim() !== query
         || dom.stockForm.getAttribute("aria-hidden") !== "false") return;
 
     if (results.length === 0) {
         dom.stockSearchResults.innerHTML = `
             <div class="empty-state small">
-                검색 결과가 없습니다. API 키를 확인하거나 직접 추가를 사용하세요.
+                ${escapeHtml(warning || "검색 결과가 없습니다. 검색어를 바꾸거나 직접 추가를 사용하세요.")}
             </div>
         `;
         return;
     }
 
-    dom.stockSearchResults.innerHTML = results.map(result => `
+    dom.stockSearchResults.innerHTML = (warning ? `<div class="empty-state small" role="status">${escapeHtml(warning)}</div>` : "") + results.map(result => `
         <button
             class="stock-result"
             type="button"
@@ -1675,10 +1678,74 @@ function bindEvents() {
     });
 }
 
+function capturePortfolioDraft() {
+    const modals = [dom.stockForm, dom.positionModal, dom.tradeModal, dom.stockSettingsModal, dom.quoteConnectionModal];
+    return {
+        selectedStockId: getStockKey(getStock()), editingPositionId, editingPositionStockId,
+        editingTrade: editingTrade ? { ...editingTrade } : null, settingsStockId,
+        pendingQuoteConnection: pendingQuoteConnection ? { ...pendingQuoteConnection } : null,
+        fields: [...document.querySelectorAll("input[id], textarea[id]")].filter(field => field.id !== "currentPrice")
+            .map(field => ({ id: field.id, value: field.value, manualDot: field.dataset.manualDot })),
+        manualOpen: dom.manualStockDetails.open,
+        modals: modals.filter(modal => modal.getAttribute("aria-hidden") === "false").map(modal => ({
+            id: modal.id, title: modal.querySelector("h2")?.textContent,
+            operation: modalOperations.get(modal) ? { ...modalOperations.get(modal) } : null
+        }))
+    };
+}
+
+function restorePortfolioDraft(draft) {
+    if (!draft) return;
+    if (draft.selectedStockId) {
+        const index = stocks.findIndex(stock => getStockKey(stock) === draft.selectedStockId);
+        if (index < 0) { SafeStorage.notify("작성하던 종목이 삭제되어 입력창을 다시 열지 않았습니다."); return; }
+        selectedIndex = index;
+    }
+    editingPositionId = draft.editingPositionId;
+    editingPositionStockId = draft.editingPositionStockId;
+    editingTrade = draft.editingTrade;
+    settingsStockId = draft.settingsStockId;
+    pendingQuoteConnection = draft.pendingQuoteConnection;
+    for (const saved of draft.fields) {
+        const field = document.getElementById(saved.id);
+        if (!field) continue;
+        field.value = saved.value;
+        if (saved.manualDot !== undefined) field.dataset.manualDot = saved.manualDot;
+    }
+    dom.manualStockDetails.open = draft.manualOpen;
+    refreshUI();
+    if (settingsStockId) renderStockSettingsConnection(getStockById(settingsStockId), pendingQuoteConnection);
+    for (const saved of draft.modals) {
+        const modal = document.getElementById(saved.id);
+        if (!modal) continue;
+        if (saved.title) modal.querySelector("h2").textContent = saved.title;
+        openModal(modal);
+        if (saved.operation) modalOperations.set(modal, { ...saved.operation, session: modalSessions.get(modal) });
+    }
+}
+
 async function startPortfolio() {
+    let initialized = false, pending;
+    try { pending = window.parent.SilverPageDrafts?.read("portfolio"); } catch { /* Standalone page. */ }
+    if (pending) {
+        for (const saved of pending.fields) {
+            const field = document.getElementById(saved.id);
+            if (field) { field.value = saved.value; if (saved.manualDot !== undefined) field.dataset.manualDot = saved.manualDot; }
+        }
+        dom.manualStockDetails.open = pending.manualOpen;
+    }
+    window.SilverPageState = { page: "portfolio", capture: () => {
+        const current = capturePortfolioDraft();
+        return initialized ? current : { ...(pending || current), selectedStockId: pending?.selectedStockId || null,
+            fields: current.fields, manualOpen: current.manualOpen };
+    } };
     if (typeof ServerStore !== "undefined" && !await ServerStore.requireSession()) return;
+    const draft = window.SilverPageState.capture();
+    initialized = true;
     stocks = PortfolioStorage.loadStocks();
     bindEvents();
     refreshUI();
+    restorePortfolioDraft(draft);
+    document.body.inert = false;
 }
 startPortfolio();

@@ -1239,6 +1239,12 @@ nav{
 .settings-hero{
     margin-bottom:22px;
 }
+.backup-card{margin-top:28px;gap:18px;}
+.backup-card input[type="file"]{max-width:100%;}
+.restore-preview{padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--surface-soft);}
+.restore-preview p{margin:12px 0;line-height:1.6;}
+.backup-card p{overflow-wrap:anywhere;}
+.save-state[data-state="error"]{color:var(--danger);}
 
 .save-state{
     color:var(--success);

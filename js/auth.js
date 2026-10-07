@@ -16,6 +16,7 @@
         panel.hidden = true;
         layout.hidden = false;
         frame.src = "pages/portfolio.html";
+        document.querySelectorAll(".menu").forEach(menu => menu.classList.toggle("active", menu.dataset.page === "portfolio"));
         window.dispatchEvent(new CustomEvent("silver-settings-changed"));
     }
 
@@ -55,8 +56,14 @@
     function authenticated(session) {
         accountText.textContent = session.user.email;
         document.getElementById("logoutButton").hidden = false;
+        if (ServerStore.hasDocuments()) { showApp(); return; }
         const source = ServerStore.localImport();
-        if (source.exists && !ServerStore.hasDocument("portfolioStocks")) {
+        if (source.unavailable) {
+            showApp();
+            UIFeedback.showToast("이 컴퓨터의 이전 자료를 읽지 못했습니다. 서버 자료는 사용할 수 있습니다.");
+            return;
+        }
+        if (source.exists) {
             form.hidden = true;
             signupForm.hidden = true;
             migration.hidden = false;
@@ -114,7 +121,10 @@
         finally { event.target.disabled = false; }
     });
     document.getElementById("skipImportButton").addEventListener("click", showApp);
-    document.getElementById("downloadLocalButton").addEventListener("click", ServerStore.downloadLocalBackup);
+    document.getElementById("downloadLocalButton").addEventListener("click", () => {
+        try { ServerStore.downloadLocalBackup(); }
+        catch (error) { message.textContent = error.message; }
+    });
     document.getElementById("logoutButton").addEventListener("click", async () => {
         try { await ServerStore.signOut(); showLogin(); }
         catch (error) { message.textContent = error.message; panel.hidden = false; }
