@@ -429,12 +429,30 @@ const Calculator = (() => {
     }
 
     async function init() {
+        let draft;
+        try { draft = window.parent.SilverPageDrafts?.read("calculator"); } catch { /* Standalone page. */ }
+        if (draft) {
+            setCurrency(draft.currency);
+            if (state.changeSign !== draft.changeSign) toggleSign();
+            dom.autoDecimal.checked = draft.autoDecimal;
+            for (const saved of draft.fields) {
+                const field = document.getElementById(saved.id);
+                if (!field) continue;
+                field.value = saved.value;
+                field.dataset.manualDot = saved.manualDot || "false";
+            }
+            for (const [key, value] of draft.operations) retryOperations.set(key, value);
+        }
+        window.SilverPageState = { page: "calculator", capture: () => ({ ...state, autoDecimal: dom.autoDecimal.checked,
+            fields: [dom.currentPrice, dom.changePercent, dom.basePrice].map(field => ({ id: field.id, value: field.value, manualDot: field.dataset.manualDot })),
+            operations: [...retryOperations] }) };
         if (typeof ServerStore !== "undefined" && !await ServerStore.requireSession()) return;
         SilverSettings.applyTheme(document);
         bindEvents();
         renderHistory();
         renderTargets();
         window.addEventListener("storage", event => { if (event.key === HISTORY_KEY) renderHistory(); });
+        document.body.inert = false;
         window.addEventListener("silver-server-changed", event => { if (event.detail.key === HISTORY_KEY) renderHistory(); });
     }
 

@@ -185,8 +185,8 @@
         } catch (error) {
             return {
                 ok: false,
-                status: "ERROR",
-                message: cached ? "API 오류, 마지막 가격 사용" : "API 오류",
+                status: error.code || "ERROR",
+                message: (error.code ? error.message : "시세를 조회하지 못했습니다.") + (cached ? " 마지막 가격을 유지합니다." : ""),
                 price: cached ? Number(cached.price) : null,
                 updatedAt: cached?.updatedAt || null,
                 fromCache: Boolean(cached),
@@ -237,7 +237,10 @@
             return mergedResults;
         } catch (error) {
             console.warn("종목 검색에 실패했습니다.", error);
-            return relatedResults;
+            const issue = new Error(error.code ? error.message : "검색 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            issue.results = relatedResults;
+            issue.code = error.code;
+            throw issue;
         }
     }
 
