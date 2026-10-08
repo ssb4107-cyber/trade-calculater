@@ -12,8 +12,17 @@ const documents = new Map(), mutations = new Map(), backups = [];
 const contexts = [], errors = [];
 const snapshots = [];
 const trash = [], requests = [], passwords = new Map();
+function trashExpiry(created) {
+    const date = new Date(Date.parse(created)+9*3600000), day = date.getUTCDate();
+    date.setUTCDate(1); date.setUTCMonth(date.getUTCMonth()+6);
+    const last = new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,0)).getUTCDate();
+    date.setUTCDate(Math.min(day,last)); return new Date(date.getTime()-9*3600000).toISOString();
+}
 function captureDeleted(uid,key,old = [],next = []) {
-    const keep = (kind,label,payload) => trash.push({ id: randomUUID(), owner: uid, kind,label,payload,created_at: new Date().toISOString() });
+    const keep = (kind,label,payload) => {
+        const created_at = new Date().toISOString();
+        trash.push({ id: randomUUID(), owner: uid, kind,label,payload,created_at,expires_at:trashExpiry(created_at) });
+    };
     if (key === "portfolioStocks") for (const stock of old) {
         const newStock = next.find(s => s.id === stock.id);
         if (!newStock) { keep("stock", stock.displayName || stock.id,{item:stock}); continue; }
@@ -74,12 +83,13 @@ const server = http.createServer(async (req, res) => {
         if (name === "silver_read_all") return reply(res, 200, [...rows.values()]);
         if (name === "silver_read_changes") return reply(res,200,[...rows.values()].filter(row => row.version > (input.p_versions[row.key] || 0)));
         if (name === "silver_operation_status") { const result = mutations.get(uid + input.p_mutation); return reply(res,200,result ? { saved:result.saved,key:result.document?.key } : null); }
-        if (name === "silver_list_trash") return reply(res,200,trash.filter(t => t.owner === uid).map(({id,kind,label,created_at}) => ({id,kind,label,created_at})));
+        if (name === "silver_list_trash") return reply(res,200,trash.filter(t => t.owner === uid && Date.parse(t.expires_at)>Date.now()).map(({id,kind,label,created_at,expires_at}) => ({id,kind,label,created_at,expires_at})));
         if (name === "silver_trash_action") {
             if (input.p_owner !== uid) return reply(res,403,{code:"42501"});
             const receipt = uid + input.p_mutation; if (mutations.has(receipt)) return reply(res,200,mutations.get(receipt));
             const entry = trash.find(t => t.owner === uid && t.id === input.p_id);
             if (!entry && input.p_action !== "empty") return reply(res,400,{message:"Trash item missing"});
+            if (input.p_action === "restore" && Date.parse(entry.expires_at)<=Date.now()) return reply(res,400,{message:"Trash item expired"});
             let result = {done:true};
             if (input.p_action === "restore") {
                 const key = entry.kind === "history" ? "stockHistory" : "portfolioStocks";

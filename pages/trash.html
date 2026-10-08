@@ -8,7 +8,7 @@
         <div class="button-row"><button id="reloadTrashBtn" class="btn-secondary" type="button">목록 새로고침</button><button id="emptyTrashBtn" class="btn-secondary" type="button">휴지통 비우기</button></div>
         <div class="form-group"><label for="trashFilter">항목 종류</label><select id="trashFilter" class="select-input"><option value="">전체</option><option value="stock">종목</option><option value="position">포지션</option><option value="trade">매도 기록</option><option value="history">계산 기록</option></select></div>
         <p id="trashMessage" class="save-state" role="status" aria-live="polite"></p><div id="trashList" class="trash-list"></div>
-        <p class="helper-text">보관 기간 제한은 없습니다. 최대 200개·20MB까지 보관하며, 가득 차면 새 삭제를 중단합니다. 영구 삭제는 휴지통에서 해당 항목을 제거합니다. 상위 종목이나 포지션이 없는 기록은 상위 항목을 먼저 복원해 주세요.</p>
+        <p class="helper-text">삭제한 날부터 6개월 동안 복원할 수 있으며, 보관기한이 지나면 자동으로 영구 삭제됩니다. 최대 200개·20MB까지 보관하며, 가득 차면 새 삭제를 중단합니다. 상위 종목이나 포지션이 없는 기록은 상위 항목을 먼저 복원해 주세요.</p>
     </section>
 </main>
 <script src="../js/backendConfig.js"></script><script src="../js/vendor/supabase.js"></script><script src="../js/serverStore.js"></script><script src="../js/safeStorage.js"></script><script src="../js/settingsStore.js"></script><script src="../js/uiFeedback.js"></script><script src="../js/trash.js"></script>
