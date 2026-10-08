@@ -20,6 +20,8 @@ const { PGlite } = require("@electric-sql/pglite");
     await db.exec(fs.readFileSync(path.join(__dirname, "../supabase/checks/server-storage.sql"), "utf8"));
     await db.exec(fs.readFileSync(path.join(__dirname, "../supabase/checks/server-isolation.sql"), "utf8"));
     await db.exec(fs.readFileSync(path.join(__dirname, "../supabase/checks/trash-and-sync.sql"), "utf8"));
+    await db.exec(fs.readFileSync(path.join(__dirname, "../supabase/checks/trash-retention.sql"), "utf8"));
+    console.log("PASS trash six-month expiry, month end/leap year, expired access/restore denial, capacity cleanup, owner isolation and active data protection");
     console.log("PASS trash atomic capture, parent restore, totals, retry, duplicate/ownership protection, capacity rollback, history and compact changes");
     const asUser = async id => {
         await db.exec("reset role; set role authenticated;");

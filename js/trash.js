@@ -11,6 +11,11 @@
             const info = document.createElement("div"), title = document.createElement("strong"), date = document.createElement("p");
             title.textContent = `${names[row.kind]} · ${row.label}`;
             date.textContent = `삭제 시각: ${new Date(row.created_at).toLocaleString("ko-KR")}`; info.append(title,date);
+            if (row.expires_at) {
+                const expires = document.createElement("p");
+                expires.textContent = `복원 기한: ${new Date(row.expires_at).toLocaleString("ko-KR")}`;
+                info.append(expires);
+            }
             const buttons = document.createElement("div"); buttons.className = "button-row";
             for (const [action,label] of [["restore","복원"],["delete","영구 삭제"]]) {
                 const button = document.createElement("button"); button.type = "button"; button.className = "btn-secondary"; button.textContent = label;
