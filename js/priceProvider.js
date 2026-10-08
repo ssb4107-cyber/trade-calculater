@@ -55,7 +55,8 @@
         const saved = await SilverSettings.tryMutate(settings => {
             const previous = settings.priceCacheBySymbol[normalizedSymbol];
             if (previous && Date.parse(previous.updatedAt) > Date.parse(updatedAt)) return false;
-            settings.priceUpdatedAtBySymbol[normalizedSymbol] = updatedAt;
+            if (updatedAt) settings.priceUpdatedAtBySymbol[normalizedSymbol] = updatedAt;
+            else delete settings.priceUpdatedAtBySymbol[normalizedSymbol];
             settings.priceCacheBySymbol[normalizedSymbol] = cacheItem;
         });
         return Boolean(saved);
@@ -160,7 +161,6 @@
         }
 
         try {
-            const requestedAt = new Date().toISOString();
             const data = typeof ServerStore !== "undefined" && ServerStore.enabled
                 ? await ServerStore.market({ action: "quote", symbol: normalizedSymbol }) : await fetchJson(
                 `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(normalizedSymbol)}&token=${encodeURIComponent(apiKey)}`
@@ -171,13 +171,15 @@
                 throw new Error("가격 데이터가 비어 있습니다.");
             }
 
-            const updatedAt = requestedAt;
+            const timestamp = Number(data.t);
+            const updatedAt = Number.isFinite(timestamp) && timestamp > 0 && timestamp * 1000 <= Date.now() + 300000
+                ? new Date(timestamp * 1000).toISOString() : null;
             const cacheSaved = options.deferCache ? false : await saveCachedPrice(normalizedSymbol, price, updatedAt);
 
             return {
                 ok: true,
                 status: "OK",
-                message: "정상 연결",
+                message: updatedAt ? "정상 연결" : "시세 시각 미제공",
                 price,
                 updatedAt,
                 cacheSaved

@@ -1472,3 +1472,8 @@ html.fixed-page.compact-layout.short-layout,
         padding:20px;
     }
 }
+.trash-list { display: grid; gap: 12px; }
+.trash-item { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; border: 1px solid #cbd5e1; border-radius: 10px; }
+.trash-item > div { min-width: 0; }
+.trash-item strong, .trash-item p { overflow-wrap: anywhere; }
+.trash-item p { margin: 6px 0 0; }

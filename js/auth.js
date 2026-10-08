@@ -11,6 +11,8 @@
     const accountText = document.getElementById("accountText");
     const layout = document.getElementById("appLayout");
     const frame = document.getElementById("pageFrame");
+    const recoveryForm = document.getElementById("recoveryForm");
+    const resetForm = document.getElementById("resetPasswordForm");
 
     function showApp() {
         panel.hidden = true;
@@ -25,6 +27,9 @@
         form.hidden = false;
         signupForm.hidden = true;
         signupForm.reset();
+        recoveryForm.hidden = true;
+        resetForm.hidden = true;
+        resetForm.reset();
         migration.hidden = true;
         layout.hidden = true;
         frame.removeAttribute("src");
@@ -35,7 +40,7 @@
     }
 
     function busy(value) {
-        for (const control of [...form.elements, ...signupForm.elements]) control.disabled = value;
+        for (const control of [...form.elements, ...signupForm.elements, ...recoveryForm.elements, ...resetForm.elements]) control.disabled = value;
     }
 
     showSignupButton.addEventListener("click", () => {
@@ -54,6 +59,7 @@
     });
 
     function authenticated(session) {
+        if (ServerStore.recoveryPending()) { showReset(); return; }
         accountText.textContent = session.user.email;
         document.getElementById("logoutButton").hidden = false;
         if (ServerStore.hasDocuments()) { showApp(); return; }
@@ -131,9 +137,44 @@
     });
     window.addEventListener("silver-signed-out", showLogin);
 
+    function showReset() {
+        showLogin(); form.hidden = true; resetForm.hidden = false;
+        document.getElementById("resetPassword").focus();
+    }
+    document.getElementById("showRecoveryButton").addEventListener("click", () => {
+        const email = document.getElementById("loginEmail").value;
+        showLogin(); form.hidden = true; recoveryForm.hidden = false;
+        document.getElementById("recoveryEmail").value = email;
+        document.getElementById("recoveryEmail").focus();
+    });
+    document.querySelectorAll(".recovery-back").forEach(button => button.addEventListener("click", async () => {
+        if (ServerStore.recoveryPending()) { try { await ServerStore.signOut(); } catch (error) { message.textContent = error.message; return; } }
+        showLogin();
+    }));
+    recoveryForm.addEventListener("submit", async event => {
+        event.preventDefault(); busy(true);
+        try {
+            await ServerStore.requestPasswordReset(document.getElementById("recoveryEmail").value.trim());
+            message.textContent = "가입된 이메일이면 복구 링크를 보냈습니다. 이메일과 스팸함을 확인해 주세요.";
+        } catch (error) { message.textContent = error.message; }
+        finally { busy(false); }
+    });
+    resetForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        const password = document.getElementById("resetPassword").value;
+        if (password !== document.getElementById("resetPasswordConfirm").value) { message.textContent = "비밀번호 확인이 일치하지 않습니다."; return; }
+        busy(true);
+        try { await ServerStore.completePasswordReset(password); showLogin(); message.textContent = "비밀번호를 변경했습니다. 새 비밀번호로 로그인해 주세요."; }
+        catch (error) { message.textContent = error.message; }
+        finally { busy(false); }
+    });
+    window.addEventListener("silver-password-recovery", showReset);
+
     if (!ServerStore.enabled) { showApp(); return; }
     showLogin();
     ServerStore.initialize().then(session => {
         if (session) authenticated(session);
-    }).catch(error => { message.textContent = error.message; });
+        else if (ServerStore.recoveryPending()) message.textContent = "복구 링크가 만료됐습니다. 새 복구 메일을 요청해 주세요.";
+    }).catch(error => { message.textContent = ServerStore.recoveryPending() ? "복구 링크가 만료됐습니다. 새 복구 메일을 요청해 주세요." : error.message; })
+        .finally(() => { if (location.hash) history.replaceState(null, "", location.pathname + location.search); });
 })();

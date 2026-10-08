@@ -9,7 +9,8 @@ window.addEventListener("silver-signed-out", () => pageDrafts.clear());
 const pages = {
     portfolio: "pages/portfolio.html",
     calculator: "pages/calculator.html",
-    settings: "pages/settings.html"
+    settings: "pages/settings.html",
+    trash: "pages/trash.html"
 };
 
 function applyAppSettings() {
@@ -67,7 +68,7 @@ window.addEventListener("message", event => {
         pageDrafts.clear();
         if (ServerStore.enabled) ServerStore.reload().then(applyAppSettings).catch(() => {});
     }
-    if (event.data?.type === "silver-settings-updated") {
+    if (event.origin === window.location.origin && event.source === frame.contentWindow && event.data?.type === "silver-settings-updated") {
         applyAppSettings();
     }
 });

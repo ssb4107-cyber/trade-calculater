@@ -170,6 +170,7 @@ const Calculator = (() => {
         } catch (error) {
             SafeStorage.notify(error.name === "StorageRecoveryRequired"
                 ? "손상된 계산 기록 원본을 보호하고 있습니다. 복구 후 다시 저장해 주세요."
+                : error.message?.startsWith("휴지통이 가득") ? error.message
                 : "계산 기록을 저장하지 못했습니다. 기존 기록을 유지합니다.");
             return false;
         }
@@ -298,7 +299,7 @@ const Calculator = (() => {
     }
 
     async function clearHistory() {
-        if (!confirm("최근 기록을 모두 삭제하시겠습니까?")) return;
+        if (!confirm("최근 기록을 모두 휴지통으로 이동하시겠습니까?")) return;
 
         if (!await changeHistory(history => { history.length = 0; })) return;
         renderHistory();

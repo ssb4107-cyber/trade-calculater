@@ -20,6 +20,7 @@
             <div class="form-group"><label for="loginPassword">비밀번호</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
             <button id="loginButton" class="btn-primary" type="submit">로그인</button>
             <button id="showSignupButton" class="btn-secondary" type="button">회원가입</button>
+            <button id="showRecoveryButton" class="btn-secondary" type="button">비밀번호를 잊으셨나요?</button>
         </form>
         <form id="signupForm" hidden>
             <h2>회원가입</h2>
@@ -28,6 +29,19 @@
             <div class="form-group"><label for="signupPasswordConfirm">비밀번호 확인</label><input id="signupPasswordConfirm" type="password" autocomplete="new-password" minlength="8" required></div>
             <button id="signupButton" class="btn-primary" type="submit">가입하기</button>
             <button id="showLoginButton" class="btn-secondary" type="button">로그인으로 돌아가기</button>
+        </form>
+        <form id="recoveryForm" hidden>
+            <h2>비밀번호 찾기</h2>
+            <div class="form-group"><label for="recoveryEmail">가입 이메일</label><input id="recoveryEmail" type="email" autocomplete="username" required></div>
+            <button id="requestRecoveryButton" class="btn-primary" type="submit">복구 메일 받기</button>
+            <button class="btn-secondary recovery-back" type="button">로그인으로 돌아가기</button>
+        </form>
+        <form id="resetPasswordForm" hidden>
+            <h2>새 비밀번호 설정</h2>
+            <div class="form-group"><label for="resetPassword">새 비밀번호</label><input id="resetPassword" type="password" autocomplete="new-password" minlength="8" required></div>
+            <div class="form-group"><label for="resetPasswordConfirm">새 비밀번호 확인</label><input id="resetPasswordConfirm" type="password" autocomplete="new-password" minlength="8" required></div>
+            <button id="resetPasswordButton" class="btn-primary" type="submit">비밀번호 변경</button>
+            <button class="btn-secondary recovery-back" type="button">취소</button>
         </form>
         <div id="migrationPanel" hidden>
             <h2>이 컴퓨터의 기존 자료</h2>
@@ -78,6 +92,7 @@
                 <span class="menu-icon">⚙</span>
                 <span class="menu-label">설정</span>
             </button>
+            <button class="menu" data-page="trash"><span class="menu-icon">♲</span><span class="menu-label">휴지통</span></button>
         </nav>
 
         <div class="account-area">

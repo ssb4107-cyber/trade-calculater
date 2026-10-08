@@ -63,6 +63,42 @@ const SafeStorage = (() => {
     }
 
     const pendingWrites = new Map();
+    let localVersions;
+    function versionDatabase() {
+        if (!localVersions) localVersions = new Promise((resolve, reject) => {
+            const request = indexedDB.open("silver-local-write-versions", 1);
+            request.onupgradeneeded = () => request.result.createObjectStore("versions");
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+            request.onblocked = () => reject(new Error("로컬 저장 확인 도구를 열지 못했습니다."));
+        });
+        return localVersions;
+    }
+    async function fingerprint(raw) {
+        const bytes = new TextEncoder().encode(raw === null ? "null:" : "text:" + raw);
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+    }
+    async function localVersion(key, hash) {
+        const db = await versionDatabase();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction("versions", hash === undefined ? "readonly" : "readwrite");
+            const store = tx.objectStore("versions");
+            const request = hash === undefined ? store.get(key) : store.put(hash, key);
+            tx.oncomplete = () => resolve(request.result);
+            tx.onabort = tx.onerror = () => reject(tx.error || request.error || new Error("로컬 저장 확인에 실패했습니다."));
+        });
+    }
+    async function confirmedLocalRaw(key) {
+        const expected = await localVersion(key);
+        const deadline = Date.now() + 3000;
+        do {
+            const raw = localStorage.getItem(key);
+            if (expected === undefined || await fingerprint(raw) === expected) return raw;
+            await new Promise(resolve => setTimeout(resolve, 20));
+        } while (Date.now() < deadline);
+        throw new Error("다른 창의 로컬 저장 자료와 일치하지 않아 덮어쓰지 않았습니다. 새로고침 후 다시 시도해 주세요.");
+    }
     function transaction(key, work) {
         const previous = pendingWrites.get(key) || Promise.resolve();
         const run = () => typeof navigator !== "undefined" && navigator.locks
@@ -88,8 +124,29 @@ const SafeStorage = (() => {
             if (typeof ServerStore !== "undefined" && ServerStore.enabled) {
                 return ServerStore.update(key, change, options);
             }
-            const result = change(undefined);
-            if (result.changed) write(key, result.value, result.state);
+            // Web Locks serialize writers, but another renderer's localStorage
+            // cache can lag behind. IndexedDB keeps only the committed hash,
+            // never business data; the server path above does not use this ledger.
+            const verifyLocal = typeof indexedDB !== "undefined" && typeof crypto !== "undefined"
+                && crypto.subtle && typeof location !== "undefined" && /^https?:$/.test(location.protocol)
+                && typeof navigator !== "undefined" && navigator.locks;
+            const raw = verifyLocal ? await confirmedLocalRaw(key) : undefined;
+            const result = change(raw);
+            if (result.changed) {
+                write(key, result.value, result.state);
+                if (verifyLocal) {
+                    const written = JSON.stringify(result.value);
+                    try { await localVersion(key, await fingerprint(written)); }
+                    catch (error) {
+                        // No other app writer can run while this lock is held.
+                        if (localStorage.getItem(key) === written) {
+                            if (raw === null) localStorage.removeItem(key);
+                            else localStorage.setItem(key, raw);
+                        }
+                        throw error;
+                    }
+                }
+            }
             return result;
         });
     }

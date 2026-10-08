@@ -53,7 +53,7 @@ const SilverSettings = (() => {
                 const valid = key === "priceCacheBySymbol"
                     ? SafeStorage.isRecord(value) && SafeStorage.isNumeric(value.price) && Number(value.price) > 0
                         && SafeStorage.isNumeric(value.cachedAt) && Number(value.cachedAt) >= 0
-                        && typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt))
+                        && (value.updatedAt === null || typeof value.updatedAt === "string" && Number.isFinite(Date.parse(value.updatedAt)))
                     : key === "priceUpdatedAtBySymbol"
                         ? typeof value === "string" && Number.isFinite(Date.parse(value))
                         : SafeStorage.isNumeric(value) && Number(value) >= 0;
