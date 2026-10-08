@@ -124,6 +124,11 @@ button:disabled{
     font-size:14px;
 }
 
+.logo .logo-mark{
+    color:#0f172a;
+    font-size:20px;
+}
+
 .sidebar-collapsed .logo-text,
 .sidebar-collapsed .menu-label{
     opacity:0;
@@ -656,8 +661,11 @@ nav{
 .price-panel{
     position:relative;
     min-width:min(100%,330px);
+    width:440px;
+    max-width:100%;
     flex-shrink:0;
     display:flex;
+    flex-wrap:wrap;
     justify-content:space-between;
     gap:20px;
     align-items:center;
@@ -666,6 +674,17 @@ nav{
     border-radius:var(--radius);
     padding:20px;
     box-shadow:var(--shadow);
+}
+
+.price-panel > div{
+    flex:1 1 220px;
+    min-width:0;
+    overflow-wrap:anywhere;
+}
+
+.price-panel #updatePriceBtn{
+    flex:none;
+    min-height:44px;
 }
 
 .price-panel label,
@@ -1392,7 +1411,7 @@ nav{
 .account-area{padding:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
 .account-area small{overflow-wrap:anywhere;}
 .account-area:has(#logoutButton[hidden]){display:none;}
-.sidebar-collapsed .account-area small{display:none;}
+.sidebar-collapsed .account-area{display:none;}
 .compact-layout .account-area{padding:0 12px 8px;font-size:12px;}
 
 /* Short landscape screens and magnified displays scroll the entire portfolio. */

@@ -2,6 +2,7 @@ const frame = document.getElementById("pageFrame");
 const menus = document.querySelectorAll(".menu");
 const appLayout = document.getElementById("appLayout");
 const sidebarToggle = document.getElementById("sidebarToggle");
+const logoutButton = document.getElementById("logoutButton");
 const pageDrafts = new Map();
 window.SilverPageDrafts = { read: page => pageDrafts.get(page) };
 window.addEventListener("silver-signed-out", () => pageDrafts.clear());
@@ -18,7 +19,9 @@ function applyAppSettings() {
 
     SilverSettings.applyTheme(document);
     appLayout.classList.toggle("sidebar-collapsed", settings.sidebarCollapsed);
+    logoutButton.disabled = settings.sidebarCollapsed;
     sidebarToggle.textContent = settings.sidebarCollapsed ? "›" : "‹";
+    sidebarToggle.setAttribute("aria-expanded", String(!settings.sidebarCollapsed));
     sidebarToggle.setAttribute(
         "aria-label",
         settings.sidebarCollapsed ? "좌측 메뉴 펼치기" : "좌측 메뉴 접기"
