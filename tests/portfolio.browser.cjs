@@ -710,6 +710,11 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
             }, [x, y]);
             assert(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= 1024 && bounds.bottom <= 600);
         }
+        await page.evaluate(() => {
+            window.dispatchEvent(new Event("resize"));
+            dom.stockList.dispatchEvent(new Event("scroll"));
+        });
+        assert.equal(await page.locator("#stockContextMenu").isVisible(), true);
         await page.locator("#openStockSettingsMenuBtn").click();
         assert.equal(await page.locator("#stockSettingsModal").isVisible(), true);
         await page.locator("#cancelStockSettingsBtn").click();

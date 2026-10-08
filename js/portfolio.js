@@ -5,6 +5,7 @@ let editingTrade = null;
 let draggedSymbol = null;
 let searchDebounceTimer = null;
 let contextMenuStockId = null;
+let contextMenuView = null;
 let settingsStockId = null;
 let pendingQuoteConnection = null;
 let connectionSearchDebounceTimer = null;
@@ -987,6 +988,9 @@ async function deletePosition(positionId) {
 
 function showStockContextMenu(stockId, x, y) {
     contextMenuStockId = stockId;
+    contextMenuView = { width: window.innerWidth, height: window.innerHeight,
+        scroll: new Map([...document.querySelectorAll(".layout,.sidebar,.content,.stock-list,.position-list"), document.scrollingElement]
+            .filter(Boolean).map(el => [el, { left: el.scrollLeft, top: el.scrollTop }])) };
     dom.stockContextMenu.hidden = false;
     const bounds = dom.stockContextMenu.getBoundingClientRect();
     const left = Math.max(8, Math.min(x, document.documentElement.clientWidth - bounds.width - 8));
@@ -997,6 +1001,7 @@ function showStockContextMenu(stockId, x, y) {
 
 function hideStockContextMenu() {
     contextMenuStockId = null;
+    contextMenuView = null;
     dom.stockContextMenu.hidden = true;
 }
 
@@ -1404,9 +1409,16 @@ function bindEvents() {
             refreshUI();
         }
     });
-    window.addEventListener("resize", hideStockContextMenu);
+    window.addEventListener("resize", () => {
+        if (contextMenuView && (contextMenuView.width !== window.innerWidth || contextMenuView.height !== window.innerHeight)) hideStockContextMenu();
+    });
     document.addEventListener("scroll", event => {
-        if (!event.target.closest?.(".context-menu")) hideStockContextMenu();
+        if (!contextMenuView || event.target.closest?.(".context-menu")) return;
+        const target = event.target === document ? document.scrollingElement : event.target;
+        const before = contextMenuView.scroll.get(target);
+        // Ignore notifications queued before the menu opened; close only when
+        // its surrounding view actually moves after opening.
+        if (!before || before.left !== target.scrollLeft || before.top !== target.scrollTop) hideStockContextMenu();
     }, true);
     window.addEventListener("storage", event => {
         if (event.key === "silverStrategySettings") {
