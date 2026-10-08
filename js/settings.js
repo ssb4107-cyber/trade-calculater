@@ -93,6 +93,84 @@ function restoreSettingsDraft(draft) {
     }
 }
 
+function initPasswordDialog() {
+    const main = document.querySelector("main");
+    const modal = document.getElementById("passwordModal");
+    const opener = document.getElementById("openPasswordDialogBtn");
+    const passwordForm = document.getElementById("changePasswordForm");
+    const message = document.getElementById("passwordMessage");
+    const status = document.getElementById("passwordStatus");
+    const submit = document.getElementById("changePasswordBtn");
+    const controls = [...passwordForm.elements];
+    let pending = false;
+
+    function clearForm() {
+        passwordForm.reset();
+        message.textContent = "";
+        delete message.dataset.state;
+    }
+    function closeDialog() {
+        if (pending || modal.hidden) return;
+        clearForm();
+        modal.hidden = true;
+        modal.setAttribute("aria-hidden", "true");
+        main.inert = false;
+        UIFeedback.closeDialog(modal);
+    }
+    opener.addEventListener("click", () => {
+        if (pending) return;
+        clearForm();
+        status.textContent = "";
+        modal.hidden = false;
+        modal.style.display = "flex";
+        modal.setAttribute("aria-hidden", "false");
+        UIFeedback.openDialog(modal);
+        main.inert = true;
+    });
+    document.getElementById("cancelPasswordBtn").addEventListener("click", closeDialog);
+    modal.addEventListener("click", event => { if (event.target === modal) closeDialog(); });
+    modal.addEventListener("keydown", event => {
+        if (event.key === "Escape") { event.preventDefault(); closeDialog(); }
+    });
+    passwordForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        if (pending || modal.hidden) return;
+        const currentPassword = document.getElementById("currentPassword").value;
+        const password = document.getElementById("newPassword").value;
+        if (password !== document.getElementById("confirmNewPassword").value) {
+            message.dataset.state = "error";
+            message.textContent = "비밀번호 확인이 일치하지 않습니다.";
+            document.getElementById("confirmNewPassword").focus();
+            return;
+        }
+        pending = true;
+        controls.forEach(el => { el.disabled = true; });
+        opener.disabled = true;
+        passwordForm.setAttribute("aria-busy", "true");
+        submit.textContent = "변경 중…";
+        delete message.dataset.state;
+        message.textContent = "비밀번호를 변경하고 있습니다.";
+        let changed = false;
+        try {
+            await ServerStore.changePassword(currentPassword, password);
+            changed = true;
+        } catch (error) {
+            message.dataset.state = "error";
+            message.textContent = error.message;
+        } finally {
+            pending = false;
+            controls.forEach(el => { el.disabled = false; });
+            opener.disabled = false;
+            passwordForm.removeAttribute("aria-busy");
+            submit.textContent = "비밀번호 변경";
+            if (changed) {
+                closeDialog();
+                status.textContent = "비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용해 주세요.";
+            }
+        }
+    });
+}
+
 async function startSettings() {
     loadSettingsForm();
     try {
@@ -111,17 +189,7 @@ async function startSettings() {
     if (typeof AccountBackup !== "undefined") AccountBackup.init();
     if (ServerStore.enabled) {
         document.getElementById("passwordPanel").hidden = false;
-        const passwordForm = document.getElementById("changePasswordForm");
-        passwordForm.addEventListener("submit", async event => {
-            event.preventDefault();
-            const message = document.getElementById("passwordMessage");
-            const password = document.getElementById("newPassword").value;
-            if (password !== document.getElementById("confirmNewPassword").value) { message.textContent = "비밀번호 확인이 일치하지 않습니다."; return; }
-            const controls = [...passwordForm.elements]; controls.forEach(el => { el.disabled = true; });
-            try { await ServerStore.changePassword(document.getElementById("currentPassword").value,password); passwordForm.reset(); message.textContent = "비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용해 주세요."; }
-            catch (error) { message.textContent = error.message; }
-            finally { controls.forEach(el => { el.disabled = false; }); }
-        });
+        initPasswordDialog();
     }
     window.addEventListener("silver-data-restored", loadSettingsForm);
     document.body.inert = false;

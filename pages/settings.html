@@ -59,13 +59,8 @@
 
     <section class="panel settings-card backup-card" id="passwordPanel" hidden>
         <div><h2>비밀번호 변경</h2><p>현재 비밀번호를 확인한 뒤 새 비밀번호로 변경합니다.</p></div>
-        <form id="changePasswordForm">
-            <div class="form-group"><label for="currentPassword">현재 비밀번호</label><input id="currentPassword" type="password" autocomplete="current-password" required></div>
-            <div class="form-group"><label for="newPassword">새 비밀번호</label><input id="newPassword" type="password" autocomplete="new-password" minlength="8" required></div>
-            <div class="form-group"><label for="confirmNewPassword">새 비밀번호 확인</label><input id="confirmNewPassword" type="password" autocomplete="new-password" minlength="8" required></div>
-            <button id="changePasswordBtn" class="btn-primary" type="submit">비밀번호 변경</button>
-            <p id="passwordMessage" class="save-state" role="status" aria-live="polite"></p>
-        </form>
+        <div><button id="openPasswordDialogBtn" class="btn-primary" type="button" aria-haspopup="dialog" aria-controls="passwordModal">변경하기</button></div>
+        <p id="passwordStatus" class="save-state" role="status" aria-live="polite"></p>
     </section>
 
     <section class="panel settings-card backup-card" id="accountBackupPanel" hidden>
@@ -86,6 +81,23 @@
         <p class="helper-text">서버 백업은 최근 20개와 계정별 보관 용량 한도 안에서 유지합니다. 내려받은 파일은 별도로 보관해 주세요. 자동 백업은 매일 첫 변경 전 자료를 보관합니다.</p>
     </section>
 </main>
+
+<div id="passwordModal" class="modal" hidden aria-hidden="true" aria-describedby="passwordHelp">
+    <div class="modal-content">
+        <h2>비밀번호 변경</h2>
+        <form id="changePasswordForm">
+            <div class="form-group"><label for="currentPassword">현재 비밀번호</label><input id="currentPassword" type="password" autocomplete="current-password" required></div>
+            <div class="form-group"><label for="newPassword">새 비밀번호</label><input id="newPassword" type="password" autocomplete="new-password" minlength="8" aria-describedby="passwordHelp" required></div>
+            <div class="form-group"><label for="confirmNewPassword">새 비밀번호 확인</label><input id="confirmNewPassword" type="password" autocomplete="new-password" minlength="8" required></div>
+            <p id="passwordHelp" class="helper-text">새 비밀번호는 8자 이상으로 입력해 주세요.</p>
+            <p id="passwordMessage" class="save-state" role="status" aria-live="polite"></p>
+            <div class="button-row">
+                <button id="cancelPasswordBtn" class="btn-secondary" type="button">취소</button>
+                <button id="changePasswordBtn" class="btn-primary" type="submit">비밀번호 변경</button>
+            </div>
+        </form>
+    </div>
+</div>
 
 <script src="../js/appConfig.js"></script>
 <script src="../js/backendConfig.js"></script>
