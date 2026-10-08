@@ -11,6 +11,20 @@ const accounts = { "a@example.test": "11111111-1111-4111-8111-111111111111", "b@
 const documents = new Map(), mutations = new Map(), backups = [];
 const contexts = [], errors = [];
 const snapshots = [];
+const trash = [], requests = [], passwords = new Map();
+function captureDeleted(uid,key,old = [],next = []) {
+    const keep = (kind,label,payload) => trash.push({ id: randomUUID(), owner: uid, kind,label,payload,created_at: new Date().toISOString() });
+    if (key === "portfolioStocks") for (const stock of old) {
+        const newStock = next.find(s => s.id === stock.id);
+        if (!newStock) { keep("stock", stock.displayName || stock.id,{item:stock}); continue; }
+        for (const position of stock.positions) {
+            const newPosition = newStock.positions.find(p => p.id === position.id);
+            if (!newPosition) { keep("position",stock.id + " position",{item:position,stock_id:stock.id}); continue; }
+            for (const trade of position.trades) if (!newPosition.trades.some(t => t.id === trade.id)) keep("trade",stock.id + " sale",{item:trade,stock_id:stock.id,position_id:position.id});
+        }
+    }
+    if (key === "stockHistory") { const removed = old.filter(h => !next.some(n => n.id === h.id)); if (removed.length) keep("history","계산 기록",{item:removed}); }
+}
 function snapshot(uid, reason = "manual") {
     const value = { portfolioStocks: [], silverStrategySettings: {}, stockHistory: [],
         ...Object.fromEntries([...(documents.get(uid) || new Map())].map(([key, row]) => [key, row.value])) };
@@ -30,6 +44,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith("/backend/")) {
         let body = ""; for await (const chunk of req) body += chunk;
         const input = body ? JSON.parse(body) : {};
+        requests.push({ path:url.pathname, input });
+        if (url.pathname.endsWith("/auth/v1/recover")) return reply(res,200,{});
         if (url.pathname.endsWith("/auth/v1/signup")) {
             signupRequests++;
             await new Promise(resolve => setTimeout(resolve, 150));
@@ -42,15 +58,46 @@ const server = http.createServer(async (req, res) => {
         }
         if (url.pathname.endsWith("/auth/v1/token")) {
             const email = input.email || "a@example.test";
-            if (!accounts[email] || input.password && input.password !== "test-password") return reply(res, 400, { error: "invalid_grant", error_description: "Invalid credentials" });
+            if (!accounts[email] || input.password && input.password !== (passwords.get(email) || "test-password")) return reply(res, 400, { error: "invalid_grant", error_description: "Invalid credentials" });
             return reply(res, 200, { access_token: jwt(email), refresh_token: "refresh-test", expires_in: 3600, token_type: "bearer", user: { id: accounts[email], email, aud: "authenticated", role: "authenticated" } });
         }
         if (url.pathname.endsWith("/auth/v1/logout")) { res.writeHead(204); return res.end(); }
         const uid = owner(req);
         if (!uid) return reply(res, 401, { message: "Login required", code: "42501" });
+        if (url.pathname.endsWith("/auth/v1/user")) {
+            const email = Object.keys(accounts).find(email => accounts[email] === uid);
+            if (req.method === "PUT" && input.password) passwords.set(email,input.password);
+            return reply(res,200,{id:uid,email,aud:"authenticated",role:"authenticated"});
+        }
         const rows = documents.get(uid) || new Map(); documents.set(uid, rows);
         const name = url.pathname.split("/").pop();
         if (name === "silver_read_all") return reply(res, 200, [...rows.values()]);
+        if (name === "silver_read_changes") return reply(res,200,[...rows.values()].filter(row => row.version > (input.p_versions[row.key] || 0)));
+        if (name === "silver_operation_status") { const result = mutations.get(uid + input.p_mutation); return reply(res,200,result ? { saved:result.saved,key:result.document?.key } : null); }
+        if (name === "silver_list_trash") return reply(res,200,trash.filter(t => t.owner === uid).map(({id,kind,label,created_at}) => ({id,kind,label,created_at})));
+        if (name === "silver_trash_action") {
+            if (input.p_owner !== uid) return reply(res,403,{code:"42501"});
+            const receipt = uid + input.p_mutation; if (mutations.has(receipt)) return reply(res,200,mutations.get(receipt));
+            const entry = trash.find(t => t.owner === uid && t.id === input.p_id);
+            if (!entry && input.p_action !== "empty") return reply(res,400,{message:"Trash item missing"});
+            let result = {done:true};
+            if (input.p_action === "restore") {
+                const key = entry.kind === "history" ? "stockHistory" : "portfolioStocks";
+                const prior = rows.get(key), value = structuredClone(prior?.value || []), item = structuredClone(entry.payload.item);
+                if (entry.kind === "stock") value.push(item);
+                else if (entry.kind === "history") value.unshift(...item);
+                else { const stock = value.find(s => s.id === entry.payload.stock_id);
+                    if (!stock) return reply(res,400,{message:"Restore parent missing"});
+                    if (entry.kind === "position") stock.positions.push(item);
+                    else { const p = stock.positions.find(p => p.id === entry.payload.position_id); if (!p) return reply(res,400,{message:"Restore parent missing"}); p.trades.push(item); }
+                }
+                const document = {owner_id:uid,key,value,version:(prior?.version||0)+1}; rows.set(key,document); result.document = document;
+            }
+            for (let i=trash.length-1;i>=0;i--) if (trash[i].owner === uid && (input.p_action === "empty" || trash[i].id === input.p_id)) trash.splice(i,1);
+            mutations.set(receipt,result);
+            if (dropResponses > 0) { dropResponses--; res.destroy(); return; }
+            return reply(res,200,result);
+        }
         if (name === "silver_read_document") return reply(res, 200, rows.get(input.p_key) || null);
         if (name === "silver_read_operation") return reply(res, 200, mutations.get(uid + input.p_mutation) || null);
         if (name === "silver_list_snapshots") return reply(res, 200, snapshots.filter(row => row.owner === uid).slice().reverse().map(({ id, reason, created_at }) => ({ id, reason, created_at })));
@@ -83,6 +130,7 @@ const server = http.createServer(async (req, res) => {
             const prior = rows.get(input.p_key);
             if ((prior?.version || 0) !== input.p_version) { conflicts++; return reply(res, 200, { saved: false }); }
             const document = { owner_id: uid, key: input.p_key, value: input.p_value, version: (prior?.version || 0)+1 };
+            captureDeleted(uid,input.p_key,prior?.value,document.value);
             rows.set(input.p_key, document);
             if (input.p_backup) backups.push({ owner: uid, key: input.p_key, raw: input.p_backup });
             const result = { saved: true, document }; mutations.set(mutationKey, result);
@@ -139,11 +187,11 @@ async function portfolio(page) {
 module.exports = {
     async start() {
         await new Promise(resolve => server.listen(0, "127.0.0.1", resolve)); base = `http://127.0.0.1:${server.address().port}`;
-        browser = await chromium.launch({ headless: true, channel: "msedge" });
+        browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL || "msedge" });
         return { browser, base };
     },
     async close() { for (const context of contexts) await context.close(); if (browser) await browser.close(); server.close(); },
-    computer, login, portfolio, accounts, documents, mutations, snapshots, errors,
+    computer, login, portfolio, accounts, documents, mutations, snapshots, errors, trash, requests, jwt,
     addAccount(email, values = {}) {
         const id = randomUUID(); accounts[email] = id;
         documents.set(id, new Map(Object.entries(values).map(([key, value]) => [key, { owner_id: id, key, value, version: 1 }])));
@@ -156,7 +204,7 @@ module.exports = {
 };
 if (require.main === module) (async () => {
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve)); base = `http://127.0.0.1:${server.address().port}`;
-    browser = await chromium.launch({ headless: true, channel: "msedge" });
+    browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL || "msedge" });
     const seed = { portfolioStocks: [{ id: "A", displayName: "A", symbol: "", connected: false, positions: [] }, { id: "B", displayName: "B", symbol: "", connected: false, positions: [] }],
         silverStrategySettings: { pinnedSymbols: ["B"], stockOrder: ["B", "A"], manuallyOrderedStocks: ["B"], darkMode: true },
         stockHistory: [{ id: "123", price: 10, pct: 1, buy: "9.9", sell: "10.1" }] };

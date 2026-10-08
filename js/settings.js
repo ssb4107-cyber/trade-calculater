@@ -109,6 +109,20 @@ async function startSettings() {
     settingsDom.saveSettingsBtn.addEventListener("click", saveSettingsForm);
     window.addEventListener("silver-settings-changed", refreshSettingsForm);
     if (typeof AccountBackup !== "undefined") AccountBackup.init();
+    if (ServerStore.enabled) {
+        document.getElementById("passwordPanel").hidden = false;
+        const passwordForm = document.getElementById("changePasswordForm");
+        passwordForm.addEventListener("submit", async event => {
+            event.preventDefault();
+            const message = document.getElementById("passwordMessage");
+            const password = document.getElementById("newPassword").value;
+            if (password !== document.getElementById("confirmNewPassword").value) { message.textContent = "비밀번호 확인이 일치하지 않습니다."; return; }
+            const controls = [...passwordForm.elements]; controls.forEach(el => { el.disabled = true; });
+            try { await ServerStore.changePassword(document.getElementById("currentPassword").value,password); passwordForm.reset(); message.textContent = "비밀번호를 변경했습니다. 다음 로그인부터 새 비밀번호를 사용해 주세요."; }
+            catch (error) { message.textContent = error.message; }
+            finally { controls.forEach(el => { el.disabled = false; }); }
+        });
+    }
     window.addEventListener("silver-data-restored", loadSettingsForm);
     document.body.inert = false;
 }

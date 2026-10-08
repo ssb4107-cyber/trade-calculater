@@ -6,3 +6,7 @@ supabase/.branches/
 .env
 .env.*
 !.env.example
+node_modules/
+dist/
+gcm-diagnose.log
+*-diagnose.log

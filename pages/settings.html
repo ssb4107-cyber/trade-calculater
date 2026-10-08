@@ -57,6 +57,17 @@
         <span id="settingsSavedText" class="save-state" aria-live="polite"></span>
     </div>
 
+    <section class="panel settings-card backup-card" id="passwordPanel" hidden>
+        <div><h2>비밀번호 변경</h2><p>현재 비밀번호를 확인한 뒤 새 비밀번호로 변경합니다.</p></div>
+        <form id="changePasswordForm">
+            <div class="form-group"><label for="currentPassword">현재 비밀번호</label><input id="currentPassword" type="password" autocomplete="current-password" required></div>
+            <div class="form-group"><label for="newPassword">새 비밀번호</label><input id="newPassword" type="password" autocomplete="new-password" minlength="8" required></div>
+            <div class="form-group"><label for="confirmNewPassword">새 비밀번호 확인</label><input id="confirmNewPassword" type="password" autocomplete="new-password" minlength="8" required></div>
+            <button id="changePasswordBtn" class="btn-primary" type="submit">비밀번호 변경</button>
+            <p id="passwordMessage" class="save-state" role="status" aria-live="polite"></p>
+        </form>
+    </section>
+
     <section class="panel settings-card backup-card" id="accountBackupPanel" hidden>
         <div><h2>자료 백업·복원</h2><p>현재 계정의 종목·설정·계산 기록을 보관합니다. 자료가 변경되는 날에는 하루 한 번 서버에 자동 보관합니다.</p></div>
         <div class="button-row">

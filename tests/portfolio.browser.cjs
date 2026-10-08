@@ -50,7 +50,7 @@ async function scenario(stocks, settings = {}) {
         page.on("pageerror", error => errors.push(error.message));
         page.on("dialog", async dialog => { alerts.push(dialog.message()); await dialog.accept(); });
         await page.goto(`${base}/pages/portfolio.html`);
-        await page.waitForFunction(() => typeof persistStockChange === "function");
+        await page.waitForFunction(() => typeof persistStockChange === "function" && document.body && !document.body.inert);
         return page;
     };
     return { context, page: await open(), open, alerts };

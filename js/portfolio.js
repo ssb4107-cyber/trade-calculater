@@ -132,6 +132,7 @@ async function persistStockChange(update, options = {}) {
         console.warn("Portfolio data could not be saved.", error);
         const message = error.name === "StorageRecoveryRequired"
             ? "손상된 저장 자료의 원본을 보호하고 있습니다. 자료 복구 후 다시 저장해 주세요."
+            : error.message?.startsWith("휴지통이 가득") ? error.message
             : "저장하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요. 입력 내용은 유지됩니다.";
         if (options.silent) SafeStorage.notify(message);
         else alert(message);
@@ -336,14 +337,14 @@ function openModal(modal) {
     modal.style.display = "flex";
     modal.setAttribute("aria-hidden", "false");
 
-    const firstInput = modal.querySelector("input, textarea, button");
-    firstInput?.focus();
+    UIFeedback.openDialog(modal);
 }
 
 function closeModal(modal) {
     modalSessions.set(modal, (modalSessions.get(modal) || 0) + 1);
     modal.style.display = "none";
     modal.setAttribute("aria-hidden", "true");
+    UIFeedback.closeDialog(modal);
 }
 
 function getModalFields(modal) {
@@ -728,7 +729,8 @@ function renderPriceStatus(stock, status = null, message = null) {
 
     dom.currentPriceText.textContent = formatMoney(price);
     dom.averagePriceText.textContent = `평단가: ${formatMoney(calculateStockAveragePrice(stock))}`;
-    dom.priceUpdatedAt.textContent = `최근 갱신: ${updatedAt}`;
+    const stale = updatedAtValue && Date.now() - Date.parse(updatedAtValue) > 15 * 60 * 1000;
+    dom.priceUpdatedAt.textContent = `시세 시각: ${updatedAtValue ? updatedAt : "제공되지 않음"}${stale ? " · 오래된 시세 (장 마감·지연 가능)" : ""}`;
     dom.priceApiStatus.className = "api-status";
     dom.priceApiStatus.classList.add(`status-${nextStatus.toLowerCase()}`);
     dom.priceApiStatus.textContent = nextMessage;
@@ -822,7 +824,7 @@ async function updateCurrentPrice(options = {}) {
 
         const current = getStockById(stockId);
         if (!matchesRequest(current)) return;
-        if (result.ok && result.updatedAt) await PriceProvider.saveCachedPrice(symbol, price, result.updatedAt);
+        if (result.ok) await PriceProvider.saveCachedPrice(symbol, price, result.updatedAt);
         await setApiFailureCount(symbol, result.ok ? 0 : getApiFailureCount(symbol) + 1);
         if (getStockKey(getStock()) === stockId) {
             refreshUI();
@@ -971,7 +973,7 @@ async function deletePosition(positionId) {
 
     if (!stock || !position) return;
 
-    if (!confirm(`포지션 #${position.number}을 삭제하시겠습니까? 거래내역도 함께 삭제됩니다.`)) {
+    if (!confirm(`포지션 #${position.number}을 휴지통으로 이동하시겠습니까? 거래내역도 함께 보관됩니다.`)) {
         return;
     }
 
@@ -1003,7 +1005,7 @@ async function deleteStock(stockId) {
 
     if (!stock) return;
 
-    if (!confirm(`${getStockDisplayName(stock)} 종목을 삭제하시겠습니까? 해당 종목의 포지션과 거래내역도 함께 삭제됩니다.`)) {
+    if (!confirm(`${getStockDisplayName(stock)} 종목을 휴지통으로 이동하시겠습니까? 포지션과 거래내역도 함께 보관됩니다.`)) {
         return;
     }
 
@@ -1262,7 +1264,7 @@ async function deleteTrade(positionId, tradeId) {
 
     if (!position || !trade) return;
 
-    if (!confirm("이 거래내역을 삭제하시겠습니까?")) {
+    if (!confirm("이 거래내역을 휴지통으로 이동하시겠습니까?")) {
         return;
     }
 

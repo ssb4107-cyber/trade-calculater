@@ -9,16 +9,36 @@ const ServerStore = (() => {
     let generation = 0;
     let polling = false;
     let timer;
+    let shellListener;
+    let refreshPending;
+    let refreshGeneration;
+    let recovery = window.parent === window && new URLSearchParams(location.hash.slice(1)).get("type") === "recovery";
+    try { recovery = recovery || sessionStorage.getItem("silver-password-recovery") === "1"; } catch { /* Storage may be blocked. */ }
+
+    function shellStore() {
+        try { return window.parent !== window && window.parent.ServerStore?.enabled ? window.parent.ServerStore : null; }
+        catch { return null; }
+    }
+    function clearRecovery() {
+        recovery = false;
+        try { sessionStorage.removeItem("silver-password-recovery"); } catch { /* Optional flag. */ }
+    }
 
     function getClient() {
         if (!client) {
             if (typeof supabase === "undefined") throw new Error("로그인 도구를 불러오지 못했습니다.");
             client = supabase.createClient(config.url, config.publishableKey, {
-                auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+                auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: window.parent === window },
                 global: { fetch: timedFetch }
             });
             client.auth.onAuthStateChange((event, next) => {
+                if (event === "PASSWORD_RECOVERY") {
+                    recovery = true;
+                    try { sessionStorage.setItem("silver-password-recovery", "1"); } catch { /* Optional reload flag. */ }
+                    window.dispatchEvent(new CustomEvent("silver-password-recovery"));
+                }
                 if (event === "SIGNED_OUT" || session && next && session.user.id !== next.user.id) {
+                    clearRecovery();
                     generation += 1;
                     session = null;
                     cache.clear();
@@ -49,7 +69,12 @@ const ServerStore = (() => {
 
     async function rpc(name, args) {
         const { data, error } = await getClient().rpc(name, args);
-        if (error) throw new Error(error.code === "42501" || error.code === "PGRST301"
+        if (error) throw new Error(error.message === "Trash full" ? "휴지통이 가득 차 삭제하지 않았습니다. 휴지통에서 불필요한 항목을 영구 삭제한 뒤 다시 시도해 주세요."
+            : error.message === "Restore duplicate" ? "같은 항목이 이미 있습니다. 기존 자료를 덮어쓰지 않았습니다."
+            : error.message === "Restore parent missing" ? "원래 종목이나 포지션이 없습니다. 상위 항목을 먼저 복원해 주세요."
+            : error.message === "Trash item missing" ? "다른 화면에서 이미 처리한 항목입니다. 휴지통 목록을 새로 확인해 주세요."
+            : error.message === "Sale exceeds holding" ? "현재 매수 수량을 초과해 매도 기록을 복원할 수 없습니다."
+            : error.code === "42501" || error.code === "PGRST301"
             ? "로그인이 만료되었습니다. 다시 로그인해 주세요."
             : "서버에 저장하거나 읽지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.");
         return data;
@@ -60,15 +85,32 @@ const ServerStore = (() => {
         const previous = cache.get(row.key);
         if (previous && previous.version >= row.version) return;
         cache.set(row.key, row);
+        shellStore()?.receiveConfirmed(row);
         if (notify) {
             window.dispatchEvent(new CustomEvent("silver-server-changed", { detail: { key: row.key } }));
             if (row.key === "silverStrategySettings") window.dispatchEvent(new CustomEvent("silver-settings-changed"));
         }
     }
 
-    async function refresh(notify = true) {
+    function refresh(notify = true) {
+        if (!refreshPending || refreshGeneration !== generation) {
+            refreshGeneration = generation;
+            const pending = refreshDocuments(notify).finally(() => { if (refreshPending === pending) refreshPending = null; });
+            refreshPending = pending;
+        }
+        return refreshPending;
+    }
+    async function refreshDocuments(notify = true) {
         const expectedGeneration = generation;
-        const rows = await rpc("silver_read_all", {});
+        const shell = shellStore();
+        if (shell && shell.confirmedRows(session?.user.id)) {
+            await shell.reload();
+            if (expectedGeneration !== generation || !session) throw new Error("로그인 상태가 변경되었습니다.");
+            for (const row of shell.confirmedRows(session.user.id) || []) accept(row, expectedGeneration, notify);
+            return;
+        }
+        const rows = cache.size ? await rpc("silver_read_changes", { p_versions: Object.fromEntries([...cache].map(([key,row]) => [key,row.version])) })
+            : await rpc("silver_read_all", {});
         if (expectedGeneration !== generation || !session) throw new Error("로그인 상태가 변경되었습니다.");
         for (const row of rows) accept(row, expectedGeneration, notify);
     }
@@ -76,6 +118,14 @@ const ServerStore = (() => {
     function schedulePoll() {
         clearTimeout(timer);
         if (!session) return;
+        const shell = shellStore();
+        if (shell?.confirmedRows(session.user.id)) {
+            if (!shellListener) {
+                shellListener = () => { for (const row of shell.confirmedRows(session?.user.id) || []) accept(row, generation); };
+                window.parent.addEventListener("silver-server-changed", shellListener);
+            }
+            return;
+        }
         timer = setTimeout(async () => {
             if (!document.hidden && !polling) {
                 polling = true;
@@ -90,7 +140,9 @@ const ServerStore = (() => {
     async function hydrate(nextSession) {
         session = nextSession;
         if (!session) return null;
-        await refresh(false);
+        const shared = shellStore()?.confirmedRows(session.user.id);
+        if (shared) for (const row of shared) accept(row, generation, false);
+        else await refresh(false);
         schedulePoll();
         return session;
     }
@@ -108,6 +160,7 @@ const ServerStore = (() => {
     async function signIn(email, password) {
         const { data, error } = await getClient().auth.signInWithPassword({ email, password });
         if (error) throw new Error("이메일 또는 비밀번호를 확인해 주세요.");
+        clearRecovery();
         generation += 1;
         cache.clear();
         ready = hydrate(data.session);
@@ -129,6 +182,7 @@ const ServerStore = (() => {
             throw new Error(messages[error.code] || "회원가입하지 못했습니다. 입력 내용을 확인하고 다시 시도해 주세요.");
         }
         if (!data.session) return null;
+        clearRecovery();
         generation += 1;
         cache.clear();
         ready = hydrate(data.session);
@@ -139,6 +193,37 @@ const ServerStore = (() => {
         const { error } = await getClient().auth.signOut({ scope: "local" });
         if (error) throw new Error("로그아웃하지 못했습니다. 다시 시도해 주세요.");
         ready = null;
+        clearRecovery();
+    }
+
+    async function changePassword(currentPassword, password) {
+        if (shellStore()) return shellStore().changePassword(currentPassword, password);
+        if (!await initialize() || !session || password.length < 8) throw new Error("로그인 상태와 8자 이상의 새 비밀번호를 확인해 주세요.");
+        const expectedGeneration = generation;
+        const email = session.user.email;
+        const verifier = supabase.createClient(config.url, config.publishableKey, {
+            auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }, global: { fetch: timedFetch }
+        });
+        try {
+            const { error } = await verifier.auth.signInWithPassword({ email, password: currentPassword });
+            if (error) throw new Error("현재 비밀번호를 확인해 주세요.");
+            if (generation !== expectedGeneration || !session || session.user.email !== email) throw new Error("로그인 상태가 변경되었습니다.");
+            const updated = await verifier.auth.updateUser({ password, current_password: currentPassword });
+            if (updated.error) throw new Error("비밀번호를 변경하지 못했습니다. 새 비밀번호를 확인하고 다시 시도해 주세요.");
+        } finally { await verifier.auth.signOut({ scope: "local" }).catch(() => {}); }
+    }
+
+    async function requestPasswordReset(email) {
+        const { error } = await getClient().auth.resetPasswordForEmail(email, { redirectTo: new URL("./", location.href).href });
+        if (error) throw new Error(error.code === "email_address_not_authorized" ? "복구 메일을 보내지 못했습니다. 메일 발송 설정을 확인해 주세요."
+            : error.status === 429 ? "메일 요청이 많습니다. 잠시 후 다시 시도해 주세요." : "복구 메일을 요청하지 못했습니다. 연결 상태를 확인해 주세요.");
+    }
+
+    async function completePasswordReset(password) {
+        if (!recovery || !await initialize() || !session || password.length < 8) throw new Error("복구 링크가 만료됐습니다. 새 복구 메일을 요청해 주세요.");
+        const { error } = await getClient().auth.updateUser({ password });
+        if (error) throw new Error("비밀번호를 변경하지 못했습니다. 새 비밀번호를 확인해 주세요.");
+        await signOut();
     }
 
     async function requireSession() {
@@ -204,9 +289,10 @@ const ServerStore = (() => {
         const expectedGeneration = generation;
         const mutation = options.operationId || crypto.randomUUID();
         if (options.operationId) {
-            const previous = await rpc("silver_read_operation", { p_mutation: mutation });
-            if (previous?.saved && previous.document.key === key) {
-                accept(previous.document, expectedGeneration);
+            const previous = await rpc("silver_operation_status", { p_mutation: mutation });
+            if (previous?.saved && previous.key === key) {
+                const latest = await rpc("silver_read_document", { p_key: key });
+                if (latest) accept(latest, expectedGeneration);
                 return { value: cache.get(key).value, changed: true };
             }
         }
@@ -290,12 +376,32 @@ const ServerStore = (() => {
     }
 
     window.addEventListener("focus", () => { if (session) refresh().catch(() => {}); });
-    window.addEventListener("pagehide", () => clearTimeout(timer));
+    window.addEventListener("pagehide", () => {
+        clearTimeout(timer);
+        if (shellListener) window.parent.removeEventListener("silver-server-changed", shellListener);
+        shellListener = null;
+    });
     window.addEventListener("pageshow", () => { if (session) schedulePoll(); });
     return { enabled, initialize, signIn, signUp, signOut, requireSession, readRaw, update, market,
         localImport, importLocal, downloadLocalBackup, hasDocument: key => cache.has(key), hasDocuments: () => cache.size > 0,
-        readAccountData, restoreDocuments, reload: refresh,
+        readAccountData, restoreDocuments, reload: refresh, changePassword, requestPasswordReset, completePasswordReset,
+        recoveryPending: () => recovery,
+        confirmedRows: owner => session && session.user.id === owner ? [...cache.values()] : null,
+        receiveConfirmed: row => { if (session && row?.owner_id === session.user.id) accept(row,generation); },
+        listTrash: () => snapshotRequest("silver_list_trash"),
+        trashAction: async (id, action, operationId) => {
+            if (!await initialize() || !session) throw new Error("로그인이 필요합니다.");
+            const args = { p_id: id, p_action: action, p_mutation: operationId, p_owner: session.user.id };
+            const expectedGeneration = generation;
+            let result;
+            try { result = await rpc("silver_trash_action", args); }
+            catch { result = await rpc("silver_trash_action", args); }
+            if (generation !== expectedGeneration || !session) throw new Error("로그인 상태가 변경되었습니다.");
+            if (result.document) accept(result.document, expectedGeneration);
+            return result;
+        },
         listSnapshots: () => snapshotRequest("silver_list_snapshots"),
         createSnapshot: () => snapshotRequest("silver_create_snapshot"),
         readSnapshot: id => snapshotRequest("silver_read_snapshot", { p_id: id }) };
 })();
+window.ServerStore = ServerStore;

@@ -42,7 +42,7 @@ async function setup(stocks, settings = {}, history = []) {
 (async () => {
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     base = `http://127.0.0.1:${server.address().port}`;
-    browser = await chromium.launch({ headless: true, channel: "msedge" });
+    browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL || "msedge" });
     await check("R01 simultaneous pins and independent map updates survive 10 repetitions", async () => {
         const { page, open } = await setup([stock("A"), stock("B")]); const second = await open();
         for (let i = 0; i < 10; i++) {
