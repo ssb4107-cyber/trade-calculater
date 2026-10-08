@@ -737,8 +737,18 @@ function renderPriceStatus(stock, status = null, message = null) {
     dom.priceApiStatus.textContent = nextMessage;
 }
 
+function renderPriceRefreshButton() {
+    const connected = isPriceConnected(getStock());
+    const loading = pendingQuoteCount > 0;
+    dom.updatePriceBtn.disabled = loading || !connected;
+    dom.updatePriceBtn.textContent = loading ? "조회 중" : "시세 새로고침";
+    dom.updatePriceBtn.setAttribute("aria-busy", String(loading));
+    dom.updatePriceBtn.title = connected ? "선택 종목의 시세를 다시 조회합니다." : "종목의 시세를 연결한 후 새로고침할 수 있습니다.";
+}
+
 function renderStockDetail() {
     const stock = getStock();
+    renderPriceRefreshButton();
 
     if (!stock) {
         dom.stockTitle.textContent = "종목 없음";
@@ -784,9 +794,8 @@ async function updateCurrentPrice(options = {}) {
         return;
     }
 
-    dom.updatePriceBtn.disabled = true;
     pendingQuoteCount += 1;
-    dom.updatePriceBtn.textContent = "조회 중";
+    renderPriceRefreshButton();
     if (!silent) {
         renderPriceStatus(stock, "WAIT", "API 조회 중");
     }
@@ -833,10 +842,7 @@ async function updateCurrentPrice(options = {}) {
         }
     } finally {
         pendingQuoteCount -= 1;
-        if (pendingQuoteCount === 0) {
-            dom.updatePriceBtn.disabled = false;
-            dom.updatePriceBtn.textContent = "현재가 새로고침";
-        }
+        renderPriceRefreshButton();
     }
 }
 
@@ -1598,7 +1604,11 @@ function bindEvents() {
         }
     });
 
-    dom.updatePriceBtn.addEventListener("click", updateCurrentPrice);
+    dom.updatePriceBtn.addEventListener("click", async () => {
+        if (dom.updatePriceBtn.disabled) return;
+        try { await updateCurrentPrice({ force: true }); }
+        catch { renderPriceStatus(getStock(), "ERROR", "시세를 갱신하지 못했습니다. 다시 시도해 주세요."); }
+    });
     dom.openQuoteConnectBtn.addEventListener("click", openQuoteConnectionModal);
     dom.cancelStockSettingsBtn.addEventListener("click", closeStockSettingsModal);
     dom.saveStockSettingsBtn.addEventListener("click", saveStockSettings);

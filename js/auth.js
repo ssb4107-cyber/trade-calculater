@@ -131,7 +131,8 @@
         try { ServerStore.downloadLocalBackup(); }
         catch (error) { message.textContent = error.message; }
     });
-    document.getElementById("logoutButton").addEventListener("click", async () => {
+    document.getElementById("logoutButton").addEventListener("click", async event => {
+        if (event.currentTarget.disabled) return;
         try { await ServerStore.signOut(); showLogin(); }
         catch (error) { message.textContent = error.message; panel.hidden = false; }
     });
