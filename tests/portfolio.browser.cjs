@@ -254,10 +254,33 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
             await savePosition();
         });
         for (let index = 0; index < 10; index += 1) await Promise.all([add(page), add(second)]);
+        // Another renderer's localStorage write arrives asynchronously. Wait for
+        // propagation before checking all records, while retaining the exact count.
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem("portfolioStocks"))[0].positions.length === 20);
         const data = (await saved(page))[0].positions;
         assert.equal(data.length, 20);
         assert.equal(new Set(data.map(item => item.id)).size, 20);
         assert.equal(new Set(data.map(item => item.number)).size, 20);
+    });
+
+    await check("F04 local commit confirmation failure rolls back data and keeps the draft retryable", async () => {
+        const { page, alerts } = await scenario([stock()]);
+        await page.evaluate(() => {
+            window.restoreLocalConfirmation = IDBObjectStore.prototype.put;
+            IDBObjectStore.prototype.put = function(value, key) {
+                if (this.name === "versions") throw new DOMException("test confirmation quota", "QuotaExceededError");
+                return window.restoreLocalConfirmation.call(this, value, key);
+            };
+            openAddPositionModal(); dom.buyPrice.value = "10"; dom.buyQty.value = "2";
+            return savePosition();
+        });
+        assert.equal((await saved(page))[0].positions.length, 0);
+        assert.equal(await page.locator("#positionModal").isVisible(), true);
+        assert.equal(await page.locator("#buyQty").inputValue(), "2");
+        assert(alerts.some(message => message.includes("저장하지 못했습니다")));
+        await page.evaluate(() => { IDBObjectStore.prototype.put = window.restoreLocalConfirmation; return savePosition(); });
+        assert.equal((await saved(page))[0].positions.length, 1);
+        assert.equal(await page.locator("#positionModal").isVisible(), false);
     });
 
     await check("F04 draft stays intact while another tab adds a trade", async () => {
@@ -547,7 +570,7 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
             await SilverSettings.tryUpdate({ finnhubApiKey: "TEST" });
             await addStockFromData({ name: "Connected", symbol: "NEW" });
         });
-        await page.waitForFunction(() => getStock().currentPrice === 26);
+        await page.waitForFunction(() => getStock().currentPrice === 26 && !dom.updatePriceBtn.disabled);
         await page.clock.fastForward(6 * 60 * 1000);
         await page.waitForFunction(() => window.quoteCalls >= 2 && getStock().currentPrice >= 27);
     });
@@ -563,9 +586,9 @@ const saved = page => page.evaluate(() => JSON.parse(localStorage.getItem("portf
             pendingQuoteConnection = { symbol: "NEW", companyName: "NEW", exchange: "TEST" };
             await saveStockSettings();
         });
-        await page.waitForFunction(() => getStock().currentPrice === 26);
+        await page.waitForFunction(() => getStock().currentPrice === 26 && !dom.updatePriceBtn.disabled);
         await page.evaluate(() => SilverSettings.tryUpdate({ apiRefreshIntervalMinutes: 1 }));
-        await page.waitForFunction(() => window.quoteCalls >= 2);
+        await page.waitForFunction(() => window.quoteCalls >= 2 && !dom.updatePriceBtn.disabled);
         const before = await page.evaluate(() => window.quoteCalls);
         await page.clock.fastForward(61000);
         await page.waitForFunction(before => window.quoteCalls > before, before);
